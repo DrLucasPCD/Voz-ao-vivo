@@ -6,6 +6,9 @@ import {
   Check,
   ChevronRight,
   CircleStop,
+  Database,
+  Download,
+  FileAudio,
   Headphones,
   Mic,
   Pause,
@@ -16,6 +19,7 @@ import {
   Volume2,
   WandSparkles,
 } from "lucide-react";
+import { strToU8, zipSync } from "fflate";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 type RecognitionResultEvent = Event & {
@@ -62,6 +66,8 @@ type TrainingSample = {
   blob: Blob;
   mimeType: string;
   createdAt: string;
+  source?: "guided" | "correction";
+  heard?: string;
 };
 
 const QUICK_PHRASES = [
@@ -117,7 +123,11 @@ function similarity(a: string, b: string) {
   return 1 - levenshtein(left, right) / longest;
 }
 
-function applyLearnedCorrection(value: string, corrections: Correction[]) {
+function applyLearnedCorrection(
+  value: string,
+  corrections: Correction[],
+  trainedPhrases: string[] = [],
+) {
   let best: Correction | undefined;
   let bestScore = 0;
   corrections.forEach((correction) => {
@@ -127,7 +137,18 @@ function applyLearnedCorrection(value: string, corrections: Correction[]) {
       bestScore = score;
     }
   });
-  return best && bestScore >= 0.84 ? best.intended : value;
+  if (best && bestScore >= 0.84) return best.intended;
+
+  let closestPhrase = "";
+  let phraseScore = 0;
+  trainedPhrases.forEach((phrase) => {
+    const score = similarity(value, phrase);
+    if (score > phraseScore) {
+      closestPhrase = phrase;
+      phraseScore = score;
+    }
+  });
+  return closestPhrase && phraseScore >= 0.72 ? closestPhrase : value;
 }
 
 function openTrainingDatabase(): Promise<IDBDatabase> {
@@ -146,24 +167,36 @@ function openTrainingDatabase(): Promise<IDBDatabase> {
 
 async function storeTrainingSample(sample: TrainingSample) {
   const db = await openTrainingDatabase();
-  await new Promise<void>((resolve, reject) => {
+  const id = await new Promise<number>((resolve, reject) => {
     const transaction = db.transaction("samples", "readwrite");
-    transaction.objectStore("samples").add(sample);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
+    const request = transaction.objectStore("samples").add(sample);
+    request.onsuccess = () => resolve(request.result as number);
+    request.onerror = () => reject(request.error);
   });
   db.close();
+  return { ...sample, id };
 }
 
-async function countTrainingSamples() {
+async function getTrainingSamples() {
   const db = await openTrainingDatabase();
-  const count = await new Promise<number>((resolve, reject) => {
-    const request = db.transaction("samples", "readonly").objectStore("samples").count();
+  const samples = await new Promise<TrainingSample[]>((resolve, reject) => {
+    const request = db.transaction("samples", "readonly").objectStore("samples").getAll();
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
   db.close();
-  return count;
+  return samples.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+async function removeTrainingSample(id: number) {
+  const db = await openTrainingDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction("samples", "readwrite");
+    transaction.objectStore("samples").delete(id);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+  db.close();
 }
 
 export function VoiceApp() {
@@ -181,11 +214,18 @@ export function VoiceApp() {
   const recognitionRef = useRef<BrowserRecognition | null>(null);
   const latestFinalRef = useRef("");
   const autoSpeakRef = useRef(false);
+  const conversationRecorderRef = useRef<MediaRecorder | null>(null);
+  const conversationChunksRef = useRef<Blob[]>([]);
+  const conversationStreamRef = useRef<MediaStream | null>(null);
+  const [pendingCorrectionAudio, setPendingCorrectionAudio] = useState<Blob | null>(null);
+  const [isPreparingCorrectionAudio, setIsPreparingCorrectionAudio] = useState(false);
 
   const [promptIndex, setPromptIndex] = useState(0);
   const [trainingPhrase, setTrainingPhrase] = useState(TRAINING_PHRASES[0]);
   const [isRecording, setIsRecording] = useState(false);
   const [trainingCount, setTrainingCount] = useState(0);
+  const [trainingSamples, setTrainingSamples] = useState<TrainingSample[]>([]);
+  const [isExporting, setIsExporting] = useState(false);
   const [latestRecordingUrl, setLatestRecordingUrl] = useState("");
   const [trainingMessage, setTrainingMessage] = useState("Leia a frase no seu ritmo");
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -206,17 +246,27 @@ export function VoiceApp() {
       setAutoSpeak(savedAutoSpeak);
       autoSpeakRef.current = savedAutoSpeak;
     }, 0);
-    countTrainingSamples().then(setTrainingCount).catch(() => undefined);
+    getTrainingSamples()
+      .then((samples) => {
+        setTrainingSamples(samples);
+        setTrainingCount(samples.length);
+      })
+      .catch(() => undefined);
   }, []);
 
   useEffect(() => {
     return () => {
       recognitionRef.current?.abort();
       streamRef.current?.getTracks().forEach((track) => track.stop());
+      conversationStreamRef.current?.getTracks().forEach((track) => track.stop());
       window.speechSynthesis?.cancel();
       if (latestRecordingUrl) URL.revokeObjectURL(latestRecordingUrl);
     };
   }, [latestRecordingUrl]);
+
+  const trainedPhrases = Array.from(
+    new Set(trainingSamples.map((sample) => sample.phrase.trim()).filter(Boolean)),
+  );
 
   const speak = useCallback((text: string) => {
     if (!text.trim() || !("speechSynthesis" in window)) return;
@@ -251,9 +301,11 @@ export function VoiceApp() {
     setMessage("Pronto para ouvir");
   };
 
-  const startListening = () => {
+  const startListening = async () => {
     setError("");
     setCorrectionSaved(false);
+    setPendingCorrectionAudio(null);
+    setIsPreparingCorrectionAudio(false);
     const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
     if (!Recognition) {
       setError("O reconhecimento de voz ainda não funciona neste navegador. Abra o app no Chrome ou Edge.");
@@ -261,6 +313,33 @@ export function VoiceApp() {
     }
 
     window.speechSynthesis?.cancel();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true },
+      });
+      conversationStreamRef.current = stream;
+      const recorder = new MediaRecorder(stream);
+      conversationRecorderRef.current = recorder;
+      conversationChunksRef.current = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data.size) conversationChunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        if (conversationChunksRef.current.length) {
+          setPendingCorrectionAudio(
+            new Blob(conversationChunksRef.current, { type: recorder.mimeType }),
+          );
+        }
+        stream.getTracks().forEach((track) => track.stop());
+        conversationStreamRef.current = null;
+        setIsPreparingCorrectionAudio(false);
+      };
+      recorder.start();
+    } catch {
+      setError("Não consegui acessar o microfone. Verifique a permissão do navegador.");
+      return;
+    }
+
     const recognition = new Recognition();
     recognition.lang = "pt-BR";
     recognition.continuous = false;
@@ -281,7 +360,7 @@ export function VoiceApp() {
         const cleanText = finalText.trim();
         latestFinalRef.current = cleanText;
         setRawTranscript(cleanText);
-        setTranscript(applyLearnedCorrection(cleanText, corrections));
+        setTranscript(applyLearnedCorrection(cleanText, corrections, trainedPhrases));
       }
     };
 
@@ -301,8 +380,16 @@ export function VoiceApp() {
       setIsListening(false);
       setInterimTranscript("");
       setMessage(latestFinalRef.current ? "Frase reconhecida" : "Pronto para ouvir");
+      if (conversationRecorderRef.current?.state === "recording") {
+        setIsPreparingCorrectionAudio(true);
+        conversationRecorderRef.current.stop();
+      }
       if (autoSpeakRef.current && latestFinalRef.current) {
-        const corrected = applyLearnedCorrection(latestFinalRef.current, corrections);
+        const corrected = applyLearnedCorrection(
+          latestFinalRef.current,
+          corrections,
+          trainedPhrases,
+        );
         window.setTimeout(() => speak(corrected), 180);
       }
     };
@@ -310,7 +397,15 @@ export function VoiceApp() {
     recognitionRef.current = recognition;
     setIsListening(true);
     setMessage("Estou ouvindo você…");
-    recognition.start();
+    try {
+      recognition.start();
+    } catch {
+      if (conversationRecorderRef.current?.state === "recording") {
+        conversationRecorderRef.current.stop();
+      }
+      setIsListening(false);
+      setError("Não consegui iniciar a escuta. Tente novamente.");
+    }
   };
 
   const stopListening = () => {
@@ -318,16 +413,35 @@ export function VoiceApp() {
     setIsListening(false);
   };
 
-  const saveCorrection = () => {
+  const saveCorrection = async () => {
     if (!rawTranscript.trim() || !transcript.trim() || normalize(rawTranscript) === normalize(transcript)) return;
+    const createdAt = new Date().toISOString();
     const next = [
       ...corrections.filter((item) => normalize(item.heard) !== normalize(rawTranscript)),
-      { heard: rawTranscript.trim(), intended: transcript.trim(), createdAt: new Date().toISOString() },
+      { heard: rawTranscript.trim(), intended: transcript.trim(), createdAt },
     ];
     setCorrections(next);
     localStorage.setItem("clara-corrections", JSON.stringify(next));
+
+    if (pendingCorrectionAudio) {
+      const saved = await storeTrainingSample({
+        phrase: transcript.trim(),
+        heard: rawTranscript.trim(),
+        blob: pendingCorrectionAudio,
+        mimeType: pendingCorrectionAudio.type,
+        createdAt,
+        source: "correction",
+      });
+      setTrainingSamples((samples) => [saved, ...samples]);
+      setTrainingCount((count) => count + 1);
+      setPendingCorrectionAudio(null);
+    }
     setCorrectionSaved(true);
-    setMessage("Correção aprendida neste dispositivo");
+    setMessage(
+      pendingCorrectionAudio
+        ? "Correção e áudio adicionados ao seu perfil de voz"
+        : "Correção aprendida neste dispositivo",
+    );
   };
 
   const clearPhrase = () => {
@@ -374,14 +488,16 @@ export function VoiceApp() {
       };
       recorder.onstop = async () => {
         const blob = new Blob(recordingChunksRef.current, { type: recorder.mimeType });
-        await storeTrainingSample({
+        const saved = await storeTrainingSample({
           phrase: trainingPhrase.trim(),
           blob,
           mimeType: recorder.mimeType,
           createdAt: new Date().toISOString(),
+          source: "guided",
         });
         if (latestRecordingUrl) URL.revokeObjectURL(latestRecordingUrl);
         setLatestRecordingUrl(URL.createObjectURL(blob));
+        setTrainingSamples((samples) => [saved, ...samples]);
         setTrainingCount((count) => count + 1);
         setTrainingMessage("Amostra salva com segurança neste dispositivo");
         stream.getTracks().forEach((track) => track.stop());
@@ -398,6 +514,72 @@ export function VoiceApp() {
   const stopTrainingRecording = () => {
     if (recorderRef.current?.state === "recording") recorderRef.current.stop();
     setIsRecording(false);
+  };
+
+  const playTrainingSample = (sample: TrainingSample) => {
+    const url = URL.createObjectURL(sample.blob);
+    const audio = new Audio(url);
+    audio.onended = () => URL.revokeObjectURL(url);
+    audio.onerror = () => URL.revokeObjectURL(url);
+    void audio.play();
+  };
+
+  const deleteTrainingSample = async (sample: TrainingSample) => {
+    if (sample.id === undefined) return;
+    await removeTrainingSample(sample.id);
+    setTrainingSamples((samples) => samples.filter((item) => item.id !== sample.id));
+    setTrainingCount((count) => Math.max(0, count - 1));
+    setTrainingMessage("Amostra removida do seu perfil");
+  };
+
+  const exportVoiceProfile = async () => {
+    if (!trainingSamples.length) return;
+    setIsExporting(true);
+    try {
+      const files: Record<string, Uint8Array> = {};
+      const manifest = [];
+      for (let index = 0; index < trainingSamples.length; index += 1) {
+        const sample = trainingSamples[index];
+        const extension = sample.mimeType.includes("ogg") ? "ogg" : "webm";
+        const fileName = `audios/amostra-${String(index + 1).padStart(3, "0")}.${extension}`;
+        files[fileName] = new Uint8Array(await sample.blob.arrayBuffer());
+        manifest.push({
+          audio: fileName,
+          texto_correto: sample.phrase,
+          reconhecido_como: sample.heard ?? null,
+          origem: sample.source ?? "guided",
+          gravado_em: sample.createdAt,
+          tipo_audio: sample.mimeType,
+        });
+      }
+      files["manifesto.json"] = strToU8(
+        JSON.stringify(
+          {
+            formato: "clara-voice-profile-v1",
+            idioma: "pt-BR",
+            total_amostras: manifest.length,
+            correcoes_textuais: corrections,
+            amostras: manifest,
+          },
+          null,
+          2,
+        ),
+      );
+      const archive = zipSync(files, { level: 6 });
+      const archiveBuffer = archive.buffer.slice(
+        archive.byteOffset,
+        archive.byteOffset + archive.byteLength,
+      ) as ArrayBuffer;
+      const url = URL.createObjectURL(new Blob([archiveBuffer], { type: "application/zip" }));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `perfil-de-voz-clara-${new Date().toISOString().slice(0, 10)}.zip`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setTrainingMessage("Perfil de voz exportado com sucesso");
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const hasCorrection =
@@ -439,8 +621,8 @@ export function VoiceApp() {
                 <div className="status-line">
                   <span className={`status-dot ${isListening ? "live" : ""}`} />
                   <span aria-live="polite">{message}</span>
-                  {corrections.length > 0 && (
-                    <span className="learned-count"><WandSparkles size={14} /> {corrections.length} {corrections.length === 1 ? "correção" : "correções"}</span>
+                  {(corrections.length > 0 || trainingCount > 0) && (
+                    <span className="learned-count"><WandSparkles size={14} /> perfil adaptativo ativo</span>
                   )}
                 </div>
 
@@ -495,12 +677,17 @@ export function VoiceApp() {
                     {isSpeaking ? "Parar áudio" : "Falar em voz clara"}
                   </button>
                   {hasCorrection && (
-                    <button className="secondary-button" onClick={saveCorrection}>
+                    <button className="secondary-button" onClick={saveCorrection} disabled={isPreparingCorrectionAudio}>
                       {correctionSaved ? <Check size={18} /> : <Save size={18} />}
-                      {correctionSaved ? "Aprendido" : "Ensinar correção"}
+                      {correctionSaved ? "Aprendido" : isPreparingCorrectionAudio ? "Preparando áudio…" : "Ensinar correção"}
                     </button>
                   )}
                 </div>
+                {hasCorrection && pendingCorrectionAudio && !correctionSaved && (
+                  <p className="audio-learning-note">
+                    <FileAudio size={14} /> Ao ensinar, a Clara guarda esta fala junto com o texto correto.
+                  </p>
+                )}
               </article>
             </section>
 
@@ -544,6 +731,11 @@ export function VoiceApp() {
               <div className="training-progress">
                 <strong>{trainingCount}</strong>
                 <span>amostras salvas<br />neste dispositivo</span>
+              </div>
+              <div className="profile-progress" aria-label={`${Math.min(trainingCount, 40)} de 40 amostras recomendadas`}>
+                <div><span>Base inicial</span><strong>{Math.min(trainingCount, 40)}/40</strong></div>
+                <span><i style={{ width: `${Math.min(100, (trainingCount / 40) * 100)}%` }} /></span>
+                <small>{trainingCount < 40 ? `Grave mais ${40 - trainingCount} para formar uma boa base inicial.` : "Sua base inicial está completa. Continue corrigindo durante o uso."}</small>
               </div>
               <div className="privacy-box">
                 <Check size={18} />
@@ -592,13 +784,55 @@ export function VoiceApp() {
                 Próxima frase <ArrowRight size={18} />
               </button>
             </article>
+
+            <article className="voice-library">
+              <div className="library-heading">
+                <div>
+                  <span className="section-label"><Database size={17} /> Meu perfil de voz</span>
+                  <p>Áudios rotulados que ajudam a Clara a adaptar frases conhecidas e preparam o treinamento do modelo personalizado.</p>
+                </div>
+                <button
+                  className="export-button"
+                  onClick={exportVoiceProfile}
+                  disabled={!trainingSamples.length || isExporting}
+                >
+                  <Download size={18} /> {isExporting ? "Preparando…" : "Exportar base"}
+                </button>
+              </div>
+
+              {trainingSamples.length ? (
+                <div className="sample-list">
+                  {trainingSamples.slice(0, 6).map((sample, index) => (
+                    <div className="sample-row" key={sample.id ?? `${sample.createdAt}-${index}`}>
+                      <button className="sample-play" onClick={() => playTrainingSample(sample)} aria-label={`Ouvir: ${sample.phrase}`}>
+                        <Play size={15} fill="currentColor" />
+                      </button>
+                      <div>
+                        <strong>{sample.phrase}</strong>
+                        <span>
+                          {sample.source === "correction" ? "Correção durante conversa" : "Treino guiado"}
+                          {sample.heard ? ` • ouvido como “${sample.heard}”` : ""}
+                        </span>
+                      </div>
+                      <time dateTime={sample.createdAt}>{new Date(sample.createdAt).toLocaleDateString("pt-BR")}</time>
+                      <button className="sample-delete" onClick={() => deleteTrainingSample(sample)} aria-label={`Excluir amostra: ${sample.phrase}`}>
+                        <Trash2 size={17} />
+                      </button>
+                    </div>
+                  ))}
+                  {trainingSamples.length > 6 && <p className="more-samples">+ {trainingSamples.length - 6} amostras guardadas no perfil exportado</p>}
+                </div>
+              ) : (
+                <div className="empty-library"><FileAudio size={23} /><span>Suas gravações aparecerão aqui.</span></div>
+              )}
+            </article>
           </section>
         )}
       </main>
 
       <footer>
         <span>Clara — sua voz, mais clara.</span>
-        <span>Protótipo inicial • Português do Brasil</span>
+        <span>Perfil adaptativo local • Português do Brasil</span>
       </footer>
     </div>
   );

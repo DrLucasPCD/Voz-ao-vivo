@@ -35,4 +35,8 @@ test("ships the personal correction and recording flows", async () => {
   assert.match(source, /webkitSpeechRecognition/);
   assert.match(source, /speechSynthesis/);
   assert.match(source, /MediaRecorder/);
+  assert.match(source, /perfil-de-voz-clara/);
+  assert.match(source, /zipSync/);
+  assert.match(source, /source:\s*"correction"/);
+  assert.match(source, /trainedPhrases/);
 });
