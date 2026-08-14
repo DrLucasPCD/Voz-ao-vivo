@@ -99,21 +99,41 @@ button:focus-visible, textarea:focus-visible, a:focus-visible {
   box-shadow: 0 2px 8px rgba(22, 75, 65, 0.10);
 }
 
-.privacy-note {
+.account-area {
   justify-self: end;
-  color: var(--muted);
-  font-size: 12px;
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.privacy-note span {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #57a77f;
-  box-shadow: 0 0 0 4px rgba(87, 167, 127, 0.13);
+.account-button, .sync-badge {
+  min-height: 36px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 13px;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.account-button {
+  border: 1px solid #a3c8ba;
+  background: var(--mint);
+  color: var(--green);
+  cursor: pointer;
+}
+
+.account-button.subtle { background: transparent; border-color: var(--line); }
+.account-button:disabled { opacity: .55; cursor: wait; }
+.sync-badge { color: var(--green-2); background: rgba(223, 242, 232, .68); }
+.sync-badge.syncing svg { animation: spin 1.2s linear infinite; }
+.sync-badge.error { color: var(--danger); background: #fff0ec; }
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 main {
@@ -360,7 +380,7 @@ footer { width: min(1184px, calc(100% - 48px)); margin: 0 auto; min-height: 74px
 
 @media (max-width: 900px) {
   .topbar { grid-template-columns: 1fr auto; }
-  .privacy-note { display: none; }
+  .account-area { grid-column: 1 / -1; justify-self: center; }
   .hero { grid-template-columns: 1fr; gap: 25px; padding-top: 48px; }
   .hero-copy { max-width: 620px; }
   .talk-grid, .training-view { grid-template-columns: 1fr; }
@@ -374,6 +394,9 @@ footer { width: min(1184px, calc(100% - 48px)); margin: 0 auto; min-height: 74px
   .brand { justify-self: center; }
   .mode-switch { width: 100%; }
   .mode-switch button { flex: 1; justify-content: center; padding: 10px 9px; font-size: 12px; }
+  .account-area { width: 100%; }
+  .account-button:not(.subtle) { width: 100%; }
+  .sync-badge { flex: 1; }
   main, footer { width: min(100% - 28px, 1184px); }
   .hero { padding: 42px 2px 30px; }
   h1 { font-size: 45px; }

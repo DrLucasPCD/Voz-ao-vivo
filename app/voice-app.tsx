@@ -6,13 +6,17 @@ import {
   Check,
   ChevronRight,
   CircleStop,
+  Cloud,
   Database,
   Download,
   FileAudio,
   Headphones,
+  LogIn,
+  LogOut,
   Mic,
   Pause,
   Play,
+  RefreshCw,
   Save,
   Sparkles,
   Trash2,
@@ -20,7 +24,23 @@ import {
   WandSparkles,
 } from "lucide-react";
 import { strToU8, zipSync } from "fflate";
+import {
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut,
+  type User,
+} from "firebase/auth";
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  deleteCloudVoiceSample,
+  downloadVoiceSample,
+  loadCloudCorrections,
+  saveCloudCorrections,
+  subscribeToVoiceSamples,
+  uploadVoiceSample,
+  type CloudVoiceSample,
+} from "./cloud-voice-profile";
+import { firebaseAuth, googleAuthProvider } from "./firebase";
 
 type RecognitionResultEvent = Event & {
   resultIndex: number;
@@ -63,11 +83,14 @@ type Correction = {
 type TrainingSample = {
   id?: number;
   phrase: string;
-  blob: Blob;
+  blob?: Blob;
   mimeType: string;
   createdAt: string;
   source?: "guided" | "correction";
   heard?: string;
+  cloudId?: string;
+  storagePath?: string;
+  synced?: boolean;
 };
 
 const QUICK_PHRASES = [
@@ -218,6 +241,18 @@ async function getTrainingSamples() {
   return samples.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+async function updateTrainingSample(sample: TrainingSample) {
+  if (sample.id === undefined) return;
+  const db = await openTrainingDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction("samples", "readwrite");
+    transaction.objectStore("samples").put(sample);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+  db.close();
+}
+
 async function removeTrainingSample(id: number) {
   const db = await openTrainingDatabase();
   await new Promise<void>((resolve, reject) => {
@@ -229,8 +264,45 @@ async function removeTrainingSample(id: number) {
   db.close();
 }
 
+function mergeTrainingSamples(
+  existing: TrainingSample[],
+  remote: CloudVoiceSample[],
+) {
+  const byCloudId = new Map<string, TrainingSample>();
+  const localOnly: TrainingSample[] = [];
+
+  existing.forEach((sample) => {
+    if (sample.cloudId) byCloudId.set(sample.cloudId, sample);
+    else if (sample.id !== undefined) localOnly.push(sample);
+  });
+
+  remote.forEach((sample) => {
+    const local = byCloudId.get(sample.cloudId);
+    byCloudId.set(sample.cloudId, { ...sample, ...local, synced: true });
+  });
+
+  return [...byCloudId.values(), ...localOnly].sort((a, b) =>
+    b.createdAt.localeCompare(a.createdAt),
+  );
+}
+
+function mergeCorrections(local: Correction[], remote: Correction[]) {
+  const merged = new Map<string, Correction>();
+  [...remote, ...local].forEach((correction) => {
+    merged.set(normalize(correction.heard), correction);
+  });
+  return [...merged.values()].sort((a, b) =>
+    b.createdAt.localeCompare(a.createdAt),
+  );
+}
+
 export function VoiceApp() {
   const [mode, setMode] = useState<"talk" | "train">("talk");
+  const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<
+    "local" | "syncing" | "synced" | "error"
+  >("local");
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [rawTranscript, setRawTranscript] = useState("");
@@ -263,6 +335,14 @@ export function VoiceApp() {
   const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
+    return onAuthStateChanged(firebaseAuth, (currentUser) => {
+      setUser(currentUser);
+      setAuthReady(true);
+      setSyncStatus(currentUser ? "syncing" : "local");
+    });
+  }, []);
+
+  useEffect(() => {
     const savedCorrections = localStorage.getItem("clara-corrections");
     const savedAutoSpeak = localStorage.getItem("clara-auto-speak") === "true";
     window.setTimeout(() => {
@@ -285,6 +365,77 @@ export function VoiceApp() {
   }, []);
 
   useEffect(() => {
+    if (!user) return;
+    let active = true;
+
+    const unsubscribe = subscribeToVoiceSamples(
+      user.uid,
+      (remoteSamples) => {
+        if (!active) return;
+        setTrainingSamples((existing) => {
+          const merged = mergeTrainingSamples(existing, remoteSamples);
+          setTrainingCount(merged.length);
+          return merged;
+        });
+        setSyncStatus("synced");
+      },
+      () => {
+        if (active) setSyncStatus("error");
+      },
+    );
+
+    const hydrateCloudProfile = async () => {
+      try {
+        const savedCorrections = localStorage.getItem("clara-corrections");
+        const localCorrections = savedCorrections
+          ? (JSON.parse(savedCorrections) as Correction[])
+          : [];
+        const remoteCorrections = await loadCloudCorrections(user.uid);
+        const mergedCorrections = mergeCorrections(
+          localCorrections,
+          remoteCorrections,
+        );
+        if (!active) return;
+        setCorrections(mergedCorrections);
+        localStorage.setItem(
+          "clara-corrections",
+          JSON.stringify(mergedCorrections),
+        );
+        await saveCloudCorrections(user.uid, mergedCorrections);
+
+        const localSamples = await getTrainingSamples();
+        for (const sample of localSamples) {
+          if (!active || sample.cloudId || !sample.blob) continue;
+          const cloudSample = await uploadVoiceSample(user.uid, {
+            phrase: sample.phrase,
+            heard: sample.heard,
+            blob: sample.blob,
+            mimeType: sample.mimeType,
+            createdAt: sample.createdAt,
+            source: sample.source ?? "guided",
+          });
+          const updated = { ...sample, ...cloudSample };
+          await updateTrainingSample(updated);
+          setTrainingSamples((samples) =>
+            samples.map((item) =>
+              item.id === updated.id ? updated : item,
+            ),
+          );
+        }
+        if (active) setSyncStatus("synced");
+      } catch {
+        if (active) setSyncStatus("error");
+      }
+    };
+
+    void hydrateCloudProfile();
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [user]);
+
+  useEffect(() => {
     return () => {
       recognitionRef.current?.abort();
       streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -297,6 +448,63 @@ export function VoiceApp() {
   const trainedPhrases = Array.from(
     new Set(trainingSamples.map((sample) => sample.phrase.trim()).filter(Boolean)),
   );
+
+  const handleSignIn = async () => {
+    setError("");
+    try {
+      await signInWithPopup(firebaseAuth, googleAuthProvider);
+    } catch (signInError) {
+      const code =
+        typeof signInError === "object" && signInError && "code" in signInError
+          ? String(signInError.code)
+          : "";
+      if (code !== "auth/popup-closed-by-user") {
+        setError("Não consegui entrar com o Google. Tente novamente.");
+      }
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await signOut(firebaseAuth);
+      const localSamples = await getTrainingSamples();
+      setTrainingSamples(localSamples);
+      setTrainingCount(localSamples.length);
+      setSyncStatus("local");
+    } catch {
+      setError("Não consegui sair da conta. Tente novamente.");
+    }
+  };
+
+  const syncTrainingSample = async (sample: TrainingSample) => {
+    if (!user || !sample.blob || sample.cloudId) return sample;
+    setSyncStatus("syncing");
+    try {
+      const cloudSample = await uploadVoiceSample(user.uid, {
+        phrase: sample.phrase,
+        heard: sample.heard,
+        blob: sample.blob,
+        mimeType: sample.mimeType,
+        createdAt: sample.createdAt,
+        source: sample.source ?? "guided",
+      });
+      const updated = { ...sample, ...cloudSample };
+      await updateTrainingSample(updated);
+      setTrainingSamples((samples) =>
+        mergeTrainingSamples(
+          samples.map((item) =>
+            item.id === updated.id ? updated : item,
+          ),
+          [cloudSample],
+        ),
+      );
+      setSyncStatus("synced");
+      return updated;
+    } catch {
+      setSyncStatus("error");
+      return sample;
+    }
+  };
 
   const speak = useCallback((text: string) => {
     if (!text.trim() || !("speechSynthesis" in window)) return;
@@ -453,6 +661,16 @@ export function VoiceApp() {
     setCorrections(next);
     localStorage.setItem("clara-corrections", JSON.stringify(next));
 
+    if (user) {
+      setSyncStatus("syncing");
+      try {
+        await saveCloudCorrections(user.uid, next);
+        setSyncStatus("synced");
+      } catch {
+        setSyncStatus("error");
+      }
+    }
+
     if (pendingCorrectionAudio) {
       const saved = await storeTrainingSample({
         phrase: transcript.trim(),
@@ -465,6 +683,7 @@ export function VoiceApp() {
       setTrainingSamples((samples) => [saved, ...samples]);
       setTrainingCount((count) => count + 1);
       setPendingCorrectionAudio(null);
+      void syncTrainingSample(saved);
     }
     setCorrectionSaved(true);
     setMessage(
@@ -529,7 +748,12 @@ export function VoiceApp() {
         setLatestRecordingUrl(URL.createObjectURL(blob));
         setTrainingSamples((samples) => [saved, ...samples]);
         setTrainingCount((count) => count + 1);
-        setTrainingMessage("Amostra salva com segurança neste dispositivo");
+        setTrainingMessage(
+          user
+            ? "Amostra salva; sincronizando com sua conta…"
+            : "Amostra salva com segurança neste dispositivo",
+        );
+        void syncTrainingSample(saved);
         stream.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
       };
@@ -546,20 +770,49 @@ export function VoiceApp() {
     setIsRecording(false);
   };
 
-  const playTrainingSample = (sample: TrainingSample) => {
-    const url = URL.createObjectURL(sample.blob);
-    const audio = new Audio(url);
-    audio.onended = () => URL.revokeObjectURL(url);
-    audio.onerror = () => URL.revokeObjectURL(url);
-    void audio.play();
+  const playTrainingSample = async (sample: TrainingSample) => {
+    try {
+      const blob =
+        sample.blob ??
+        (sample.storagePath
+          ? await downloadVoiceSample(sample.storagePath)
+          : null);
+      if (!blob) throw new Error("Amostra sem áudio");
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onended = () => URL.revokeObjectURL(url);
+      audio.onerror = () => URL.revokeObjectURL(url);
+      await audio.play();
+    } catch {
+      setError("Não consegui carregar esta amostra de voz.");
+    }
   };
 
   const deleteTrainingSample = async (sample: TrainingSample) => {
-    if (sample.id === undefined) return;
-    await removeTrainingSample(sample.id);
-    setTrainingSamples((samples) => samples.filter((item) => item.id !== sample.id));
-    setTrainingCount((count) => Math.max(0, count - 1));
-    setTrainingMessage("Amostra removida do seu perfil");
+    try {
+      if (sample.cloudId && sample.storagePath && user) {
+        setSyncStatus("syncing");
+        await deleteCloudVoiceSample(user.uid, {
+          cloudId: sample.cloudId,
+          storagePath: sample.storagePath,
+        });
+      }
+      if (sample.id !== undefined) await removeTrainingSample(sample.id);
+      setTrainingSamples((samples) => {
+        const next = samples.filter((item) =>
+          sample.cloudId
+            ? item.cloudId !== sample.cloudId
+            : item.id !== sample.id,
+        );
+        setTrainingCount(next.length);
+        return next;
+      });
+      setSyncStatus(user ? "synced" : "local");
+      setTrainingMessage("Amostra removida do seu perfil");
+    } catch {
+      setSyncStatus("error");
+      setError("Não consegui remover esta amostra. Tente novamente.");
+    }
   };
 
   const exportVoiceProfile = async () => {
@@ -570,9 +823,15 @@ export function VoiceApp() {
       const manifest = [];
       for (let index = 0; index < trainingSamples.length; index += 1) {
         const sample = trainingSamples[index];
+        const blob =
+          sample.blob ??
+          (sample.storagePath
+            ? await downloadVoiceSample(sample.storagePath)
+            : null);
+        if (!blob) continue;
         const extension = sample.mimeType.includes("ogg") ? "ogg" : "webm";
         const fileName = `audios/amostra-${String(index + 1).padStart(3, "0")}.${extension}`;
-        files[fileName] = new Uint8Array(await sample.blob.arrayBuffer());
+        files[fileName] = new Uint8Array(await blob.arrayBuffer());
         manifest.push({
           audio: fileName,
           texto_correto: sample.phrase,
@@ -630,7 +889,29 @@ export function VoiceApp() {
             <BookOpen size={17} /> Treinar minha voz
           </button>
         </nav>
-        <div className="privacy-note"><span /> Seus dados ficam neste dispositivo</div>
+        <div className="account-area">
+          {user ? (
+            <>
+              <div className={`sync-badge ${syncStatus}`} title={user.email ?? "Conta conectada"}>
+                {syncStatus === "syncing" ? <RefreshCw size={15} /> : <Cloud size={15} />}
+                <span>
+                  {syncStatus === "syncing"
+                    ? "Sincronizando…"
+                    : syncStatus === "error"
+                      ? "Falha ao sincronizar"
+                      : "Perfil sincronizado"}
+                </span>
+              </div>
+              <button className="account-button subtle" onClick={handleSignOut} aria-label="Sair da conta Google">
+                <LogOut size={16} /> Sair
+              </button>
+            </>
+          ) : (
+            <button className="account-button" onClick={handleSignIn} disabled={!authReady}>
+              <LogIn size={16} /> {authReady ? "Entrar para sincronizar" : "Carregando…"}
+            </button>
+          )}
+        </div>
       </header>
 
       <main id="inicio">
@@ -760,7 +1041,7 @@ export function VoiceApp() {
               </p>
               <div className="training-progress">
                 <strong>{trainingCount}</strong>
-                <span>amostras salvas<br />neste dispositivo</span>
+                <span>amostras {user ? "sincronizadas" : "salvas"}<br />{user ? "na sua conta" : "neste dispositivo"}</span>
               </div>
               <div className="profile-progress" aria-label={`${Math.min(trainingCount, 40)} de 40 amostras recomendadas`}>
                 <div><span>Base inicial</span><strong>{Math.min(trainingCount, 40)}/40</strong></div>
@@ -768,8 +1049,13 @@ export function VoiceApp() {
                 <small>{trainingCount < 40 ? `Grave mais ${40 - trainingCount} para formar uma boa base inicial.` : "Sua base inicial está completa. Continue corrigindo durante o uso."}</small>
               </div>
               <div className="privacy-box">
-                <Check size={18} />
-                <span><strong>Privado por padrão.</strong> Nenhum áudio sai deste dispositivo nesta versão.</span>
+                {user ? <Cloud size={18} /> : <Check size={18} />}
+                <span>
+                  <strong>{user ? "Sincronização privada." : "Local por padrão."}</strong>{" "}
+                  {user
+                    ? "Suas amostras ficam protegidas pelo seu login e disponíveis nos seus dispositivos."
+                    : "Entre com Google para acessar suas amostras em outros dispositivos."}
+                </span>
               </div>
             </div>
 
@@ -834,7 +1120,7 @@ export function VoiceApp() {
               {trainingSamples.length ? (
                 <div className="sample-list">
                   {trainingSamples.slice(0, 6).map((sample, index) => (
-                    <div className="sample-row" key={sample.id ?? `${sample.createdAt}-${index}`}>
+                    <div className="sample-row" key={sample.cloudId ?? sample.id ?? `${sample.createdAt}-${index}`}>
                       <button className="sample-play" onClick={() => playTrainingSample(sample)} aria-label={`Ouvir: ${sample.phrase}`}>
                         <Play size={15} fill="currentColor" />
                       </button>
@@ -843,6 +1129,7 @@ export function VoiceApp() {
                         <span>
                           {sample.source === "correction" ? "Correção durante conversa" : "Treino guiado"}
                           {sample.heard ? ` • ouvido como “${sample.heard}”` : ""}
+                          {sample.synced ? " • sincronizada" : user ? " • aguardando sincronização" : " • somente neste dispositivo"}
                         </span>
                       </div>
                       <time dateTime={sample.createdAt}>{new Date(sample.createdAt).toLocaleDateString("pt-BR")}</time>
@@ -863,7 +1150,7 @@ export function VoiceApp() {
 
       <footer>
         <span>Clara — sua voz, mais clara.</span>
-        <span>Perfil adaptativo local • Português do Brasil</span>
+        <span>{user ? "Perfil protegido e sincronizado" : "Perfil adaptativo local"} • Português do Brasil</span>
       </footer>
     </div>
   );

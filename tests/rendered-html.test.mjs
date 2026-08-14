@@ -33,3 +33,23 @@ test("ships the clinical consultation voice workflow", async () => {
   assert.match(source, /MediaRecorder/);
   assert.match(source, /perfil-de-voz-clara/);
 });
+
+test("ships private Firebase voice-profile synchronization", async () => {
+  const [source, firebaseSource, cloudSource, firestoreRules, storageRules] =
+    await Promise.all([
+      readFile(new URL("app/voice-app.tsx", root), "utf8"),
+      readFile(new URL("app/firebase.ts", root), "utf8"),
+      readFile(new URL("app/cloud-voice-profile.ts", root), "utf8"),
+      readFile(new URL("firestore.rules", root), "utf8"),
+      readFile(new URL("storage.rules", root), "utf8"),
+    ]);
+
+  assert.match(firebaseSource, /GoogleAuthProvider/);
+  assert.match(firebaseSource, /projectId: "voz-ao-vivo"/);
+  assert.match(source, /Entrar para sincronizar/);
+  assert.match(source, /syncTrainingSample/);
+  assert.match(cloudSource, /uploadVoiceSample/);
+  assert.match(cloudSource, /subscribeToVoiceSamples/);
+  assert.match(firestoreRules, /request\.auth\.uid == userId/);
+  assert.match(storageRules, /request\.resource\.contentType\.matches\('audio\/\.\*'\)/);
+});
