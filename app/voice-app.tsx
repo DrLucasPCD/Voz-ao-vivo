@@ -71,21 +71,51 @@ type TrainingSample = {
 };
 
 const QUICK_PHRASES = [
-  "Sim, por favor.",
-  "Não, obrigado.",
-  "Pode repetir?",
-  "Preciso de ajuda.",
+  "Qual é o principal motivo da consulta?",
+  "Quando os sintomas começaram?",
+  "Você usa algum medicamento continuamente?",
+  "Você tem alergia a algum medicamento?",
 ];
 
 const TRAINING_PHRASES = [
-  "Olá, tudo bem com você?",
-  "Eu gostaria de um copo de água.",
-  "Por favor, fale um pouco mais devagar.",
-  "Preciso de ajuda agora.",
-  "Obrigado por me escutar.",
-  "Meu nome é Lucas.",
-  "Pode repetir o que você disse?",
-  "Estou pronto para começar.",
+  { context: "Abertura", text: "Bom dia, eu sou o doutor Lucas e vou conduzir sua consulta." },
+  { context: "Abertura", text: "Como você prefere ser chamado?" },
+  { context: "Abertura", text: "Qual é o principal motivo da consulta de hoje?" },
+  { context: "Abertura", text: "Além disso, existe outra preocupação que você gostaria de conversar?" },
+  { context: "Queixa principal", text: "Conte com suas palavras o que está sentindo." },
+  { context: "Queixa principal", text: "Quando esse sintoma começou?" },
+  { context: "Queixa principal", text: "O início foi súbito ou aconteceu aos poucos?" },
+  { context: "Queixa principal", text: "Esse sintoma está melhorando, piorando ou permanece igual?" },
+  { context: "Caracterização", text: "Em qual parte do corpo você sente o problema?" },
+  { context: "Caracterização", text: "Como você descreveria essa sensação?" },
+  { context: "Caracterização", text: "De zero a dez, qual é a intensidade do sintoma?" },
+  { context: "Caracterização", text: "O sintoma é contínuo ou aparece em alguns momentos?" },
+  { context: "Caracterização", text: "Existe algo que melhora o sintoma?" },
+  { context: "Caracterização", text: "Existe algo que piora o sintoma?" },
+  { context: "Sintomas associados", text: "Você teve febre ou calafrios?" },
+  { context: "Sintomas associados", text: "Você sentiu falta de ar, tontura ou desmaio?" },
+  { context: "Sintomas associados", text: "Você teve náuseas, vômitos ou alteração do apetite?" },
+  { context: "Sintomas associados", text: "Percebeu alguma alteração no sono, no peso ou na disposição?" },
+  { context: "Antecedentes", text: "Você tem alguma doença ou condição de saúde diagnosticada?" },
+  { context: "Antecedentes", text: "Já precisou ser internado ou fazer alguma cirurgia?" },
+  { context: "Antecedentes", text: "Já teve esse mesmo problema antes?" },
+  { context: "Antecedentes", text: "Existe alguma doença importante na sua família?" },
+  { context: "Medicamentos", text: "Quais medicamentos você usa atualmente?" },
+  { context: "Medicamentos", text: "Você sabe a dose e o horário de cada medicamento?" },
+  { context: "Medicamentos", text: "Usou algum remédio por conta própria para esse sintoma?" },
+  { context: "Alergias", text: "Você tem alergia a algum medicamento, alimento ou substância?" },
+  { context: "Alergias", text: "O que acontece quando você entra em contato com essa substância?" },
+  { context: "Hábitos", text: "Você fuma ou já fumou?" },
+  { context: "Hábitos", text: "Você consome bebidas alcoólicas? Com que frequência?" },
+  { context: "Hábitos", text: "Como são sua alimentação e sua rotina de atividade física?" },
+  { context: "Segurança", text: "Neste momento, você sente dor muito forte ou dificuldade para respirar?" },
+  { context: "Segurança", text: "Houve perda de consciência, fraqueza súbita ou alteração da fala?" },
+  { context: "Compreensão", text: "Vou repetir o que entendi para confirmar se está correto." },
+  { context: "Compreensão", text: "Existe algum detalhe importante que eu ainda não perguntei?" },
+  { context: "Plano", text: "Agora vou realizar o exame físico e explicar os próximos passos." },
+  { context: "Plano", text: "Você entendeu as orientações ou gostaria que eu explicasse novamente?" },
+  { context: "Encerramento", text: "Você tem alguma dúvida antes de encerrarmos a consulta?" },
+  { context: "Encerramento", text: "Obrigado por compartilhar essas informações comigo." },
 ];
 
 const normalize = (value: string) =>
@@ -221,7 +251,7 @@ export function VoiceApp() {
   const [isPreparingCorrectionAudio, setIsPreparingCorrectionAudio] = useState(false);
 
   const [promptIndex, setPromptIndex] = useState(0);
-  const [trainingPhrase, setTrainingPhrase] = useState(TRAINING_PHRASES[0]);
+  const [trainingPhrase, setTrainingPhrase] = useState(TRAINING_PHRASES[0].text);
   const [isRecording, setIsRecording] = useState(false);
   const [trainingCount, setTrainingCount] = useState(0);
   const [trainingSamples, setTrainingSamples] = useState<TrainingSample[]>([]);
@@ -469,7 +499,7 @@ export function VoiceApp() {
   const nextTrainingPhrase = () => {
     const next = (promptIndex + 1) % TRAINING_PHRASES.length;
     setPromptIndex(next);
-    setTrainingPhrase(TRAINING_PHRASES[next]);
+    setTrainingPhrase(TRAINING_PHRASES[next].text);
     setTrainingMessage("Leia a frase no seu ritmo");
   };
 
@@ -608,11 +638,11 @@ export function VoiceApp() {
           <>
             <section className="hero">
               <div>
-                <p className="eyebrow"><Sparkles size={16} /> Comunicação assistida</p>
-                <h1>Sua voz merece<br /><em>ser compreendida.</em></h1>
+                <p className="eyebrow"><Sparkles size={16} /> Consulta médica assistida</p>
+                <h1>Sua voz conduz<br /><em>a consulta.</em></h1>
               </div>
               <p className="hero-copy">
-                Fale do seu jeito. A Clara escuta, aprende com suas correções e reproduz sua mensagem com clareza.
+                Faça suas perguntas ao paciente do seu jeito. A Clara escuta, aprende com suas correções e reproduz sua fala com clareza.
               </p>
             </section>
 
@@ -644,8 +674,8 @@ export function VoiceApp() {
               <article className="message-card">
                 <div className="message-header">
                   <div>
-                    <span className="section-label">Sua mensagem</span>
-                    <span className="section-hint">Você pode corrigir antes de reproduzir</span>
+                    <span className="section-label">Sua pergunta ao paciente</span>
+                    <span className="section-hint">Corrija o texto antes de reproduzir durante a consulta</span>
                   </div>
                   {(transcript || interimTranscript) && (
                     <button className="icon-button" onClick={clearPhrase} aria-label="Limpar frase"><Trash2 size={18} /></button>
@@ -659,7 +689,7 @@ export function VoiceApp() {
                       setTranscript(event.target.value);
                       setCorrectionSaved(false);
                     }}
-                    placeholder={interimTranscript || "O que você disser aparecerá aqui…"}
+                    placeholder={interimTranscript || "Sua pergunta aparecerá aqui…"}
                     aria-label="Mensagem reconhecida, editável"
                   />
                   {isListening && interimTranscript && <p className="interim-text">Ouvindo: {interimTranscript}</p>}
@@ -694,8 +724,8 @@ export function VoiceApp() {
             <section className="lower-grid">
               <article className="quick-card">
                 <div className="small-card-heading">
-                  <span><Sparkles size={16} /> Frases rápidas</span>
-                  <small>Um toque para falar</small>
+                  <span><Sparkles size={16} /> Perguntas rápidas</span>
+                  <small>Um toque para perguntar</small>
                 </div>
                 <div className="quick-list">
                   {QUICK_PHRASES.map((phrase) => (
@@ -723,10 +753,10 @@ export function VoiceApp() {
         ) : (
           <section className="training-view">
             <div className="training-intro">
-              <p className="eyebrow"><WandSparkles size={16} /> Treinamento pessoal</p>
-              <h1>Ajude a Clara a<br /><em>conhecer sua voz.</em></h1>
+              <p className="eyebrow"><WandSparkles size={16} /> Treinamento clínico</p>
+              <h1>Treine sua voz para<br /><em>conduzir consultas.</em></h1>
               <p>
-                Cada frase gravada cria um exemplo com sua voz e o texto correto. Com o tempo, isso forma a base para um reconhecimento realmente personalizado.
+                Grave perguntas que você usa na anamnese. Cada exemplo associa sua voz ao texto correto e fortalece seu perfil de reconhecimento clínico.
               </p>
               <div className="training-progress">
                 <strong>{trainingCount}</strong>
@@ -748,7 +778,8 @@ export function VoiceApp() {
                 <span>Frase {promptIndex + 1} de {TRAINING_PHRASES.length}</span>
                 <button onClick={nextTrainingPhrase} disabled={isRecording}>Pular frase <ChevronRight size={16} /></button>
               </div>
-              <label htmlFor="training-phrase">Leia esta frase — ou escreva uma que você usa muito</label>
+              <div className="context-chip">Contexto: {TRAINING_PHRASES[promptIndex].context}</div>
+              <label htmlFor="training-phrase">Leia esta pergunta — ou escreva uma que você usa na consulta</label>
               <textarea
                 id="training-phrase"
                 value={trainingPhrase}

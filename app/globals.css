@@ -1,5 +1,3 @@
-@import "tailwindcss";
-
 :root {
   --ink: #12332d;
   --muted: #687a75;
@@ -13,13 +11,6 @@
   --peach: #f3cf9f;
   --danger: #a54232;
   --shadow: 0 22px 60px rgba(22, 75, 65, 0.10);
-}
-
-@theme inline {
-  --color-background: var(--paper);
-  --color-foreground: var(--ink);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
 }
 
 * { box-sizing: border-box; }
@@ -325,6 +316,7 @@ h1 em { color: var(--green-2); font-weight: 500; }
 .step-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
 .step-heading > span { color: var(--green-2); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; font-weight: 800; }
 .step-heading button { border: 0; background: transparent; color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 2px; cursor: pointer; }
+.context-chip { display: inline-flex; width: fit-content; margin: -10px 0 18px; padding: 7px 11px; border-radius: 999px; background: #edf2ce; color: var(--green); font-size: 11px; font-weight: 800; letter-spacing: .02em; }
 .training-card label { display: block; color: var(--muted); font-size: 13px; margin-bottom: 10px; }
 .training-card > textarea { width: 100%; min-height: 122px; resize: vertical; border: 1px solid var(--line); border-radius: 15px; background: #fafaf5; color: var(--ink); padding: 18px; font-family: Georgia, serif; font-size: 27px; line-height: 1.35; }
 .recording-area { margin: 22px 0; padding: 19px; border: 1px dashed #c9d3cd; border-radius: 16px; display: flex; align-items: center; gap: 16px; }

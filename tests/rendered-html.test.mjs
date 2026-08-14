@@ -2,41 +2,34 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-async function render() {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
+const root = new URL("../", import.meta.url);
 
-  return worker.fetch(
-    new Request("http://localhost/", { headers: { accept: "text/html" } }),
-    { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
-    { waitUntil() {}, passThroughOnException() {} },
-  );
-}
+test("is configured as a standard Next.js app for Netlify", async () => {
+  const [packageJson, netlifyConfig] = await Promise.all([
+    readFile(new URL("package.json", root), "utf8"),
+    readFile(new URL("netlify.toml", root), "utf8"),
+  ]);
 
-test("server-renders the Clara voice assistant", async () => {
-  const response = await render();
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
-
-  const html = await response.text();
-  assert.match(html, /<html[^>]*lang="pt-BR"/i);
-  assert.match(html, /<title>Clara — sua voz, mais clara<\/title>/i);
-  assert.match(html, /Sua voz merece/);
-  assert.match(html, /Treinar minha voz/);
-  assert.match(html, /Falar em voz clara/);
-  assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Starter Project/i);
+  assert.match(packageJson, /"next": "\^16\.2\.6"/);
+  assert.match(packageJson, /"build": "next build"/);
+  assert.doesNotMatch(packageJson, /vinext|wrangler|cloudflare/);
+  assert.match(netlifyConfig, /command = "npm run build"/);
+  assert.match(netlifyConfig, /publish = "\.next"/);
+  assert.match(netlifyConfig, /Permissions-Policy = "microphone=\(self\)"/);
 });
 
-test("ships the personal correction and recording flows", async () => {
-  const source = await readFile(new URL("../app/voice-app.tsx", import.meta.url), "utf8");
+test("ships the clinical consultation voice workflow", async () => {
+  const source = await readFile(new URL("app/voice-app.tsx", root), "utf8");
+
+  assert.match(source, /Consulta médica assistida/);
+  assert.match(source, /Qual é o principal motivo da consulta/);
+  assert.match(source, /context: "Queixa principal"/);
+  assert.match(source, /context: "Medicamentos"/);
+  assert.match(source, /context: "Alergias"/);
+  assert.match(source, /context: "Encerramento"/);
   assert.match(source, /clara-corrections/);
   assert.match(source, /clara-voice-training/);
-  assert.match(source, /webkitSpeechRecognition/);
   assert.match(source, /speechSynthesis/);
   assert.match(source, /MediaRecorder/);
   assert.match(source, /perfil-de-voz-clara/);
-  assert.match(source, /zipSync/);
-  assert.match(source, /source:\s*"correction"/);
-  assert.match(source, /trainedPhrases/);
 });
