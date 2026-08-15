@@ -100,6 +100,10 @@ import {
   isOfflineShellPrepared,
   registerOfflineServiceWorker,
 } from "./offline-support";
+import {
+  isLocalDecodingFailure,
+  isNonSpeechTranscript,
+} from "./transcription-filter";
 
 type RecognitionAlternative = { transcript: string; confidence: number };
 
@@ -1352,6 +1356,11 @@ export function VoiceApp() {
               usedLocalTranscription = true;
             }
           } catch (localError) {
+            if (isLocalDecodingFailure(localError)) {
+              setError("Reconhecimento local: Decoding failed. Trecho descartado sem reprodução.");
+              setMessage("Falha de decodificação ignorada; nenhum áudio será emitido");
+              return;
+            }
             if (!navigator.onLine || !topTranscript) {
               setError(
                 localError instanceof Error
@@ -1371,6 +1380,11 @@ export function VoiceApp() {
           return;
         }
         if (!topTranscript && !contextualTranscript) return;
+        if (isNonSpeechTranscript(contextualTranscript || topTranscript)) {
+          setError("");
+          setMessage("Som sem fala, como música ou ruído, foi ignorado sem reprodução");
+          return;
+        }
 
         if (speakerIdentification.ready && !speakerIdentification.isOwner) {
           setPendingCorrectionAudio(null);
@@ -1435,7 +1449,7 @@ export function VoiceApp() {
           }
         }
 
-        if (!finalText) return;
+        if (!finalText || isNonSpeechTranscript(finalText)) return;
         if (!recognizedText) recognizedText = finalText;
         setRawTranscript(recognizedText);
         setTranscript(finalText);

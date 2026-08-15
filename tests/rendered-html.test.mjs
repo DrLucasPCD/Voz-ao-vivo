@@ -114,6 +114,9 @@ test("ships the clinical consultation voice workflow", async () => {
   assert.match(source, /navigator\.audioSession\.type = type/);
   assert.match(source, /A gravação só termina quando você tocar neste botão novamente/);
   assert.match(source, /Emite sua fala sem interromper o microfone/);
+  assert.match(source, /isLocalDecodingFailure/);
+  assert.match(source, /isNonSpeechTranscript/);
+  assert.match(source, /Trecho descartado sem reprodução/);
   assert.match(source, /Identificação automática de quem está falando/);
   assert.match(source, /Equipe, colega ou preceptoria/);
   assert.match(source, /prioritizeQuickQuestions/);
