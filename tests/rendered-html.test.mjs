@@ -121,7 +121,7 @@ test("ships the clinical consultation voice workflow", async () => {
 });
 
 test("ships private free-tier Firebase voice-profile synchronization", async () => {
-  const [source, firebaseSource, cloudSource, firestoreRules, firebaseConfig, netlifyConfig] =
+  const [source, firebaseSource, cloudSource, firestoreRules, firebaseConfig, netlifyConfig, authInit] =
     await Promise.all([
       readFile(new URL("app/voice-app.tsx", root), "utf8"),
       readFile(new URL("app/firebase.ts", root), "utf8"),
@@ -129,6 +129,7 @@ test("ships private free-tier Firebase voice-profile synchronization", async () 
       readFile(new URL("firestore.rules", root), "utf8"),
       readFile(new URL("firebase.json", root), "utf8"),
       readFile(new URL("netlify.toml", root), "utf8"),
+      readFile(new URL("public/__/firebase/init.json", root), "utf8"),
     ]);
 
   assert.match(firebaseSource, /GoogleAuthProvider/);
@@ -158,4 +159,6 @@ test("ships private free-tier Firebase voice-profile synchronization", async () 
   assert.doesNotMatch(firebaseSource, /getStorage|firebase\/storage/);
   assert.doesNotMatch(firebaseConfig, /"storage"/);
   assert.match(netlifyConfig, /from = "\/__\/auth\/\*"/);
+  assert.match(netlifyConfig, /for = "\/__\/firebase\/init\.json"/);
+  assert.equal(JSON.parse(authInit).authDomain, "voz-ao-vivo.netlify.app");
 });

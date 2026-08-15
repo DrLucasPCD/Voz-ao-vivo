@@ -10,6 +10,14 @@
   targetPort = 3000
   port = 8888
 
+# O helper OAuth busca esta configuração no próprio domínio depois que o
+# Google devolve a conta. O arquivo correspondente está em public/__/firebase.
+[[headers]]
+  for = "/__/firebase/init.json"
+  [headers.values]
+    Cache-Control = "public, max-age=300, must-revalidate"
+    Content-Type = "application/json; charset=utf-8"
+
 # Mantém o fluxo de autenticação Firebase no mesmo domínio em navegadores móveis.
 [[redirects]]
   from = "/__/auth/*"
