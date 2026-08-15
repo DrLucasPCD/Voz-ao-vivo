@@ -433,6 +433,7 @@ export function VoiceApp() {
   const [recordPdfDownloaded, setRecordPdfDownloaded] = useState(false);
   const [isGeneratingRecordPdf, setIsGeneratingRecordPdf] = useState(false);
   const [recordMessage, setRecordMessage] = useState("");
+  const [recordDeleteRequested, setRecordDeleteRequested] = useState(false);
   const [transcriptionSource, setTranscriptionSource] = useState<
     "browser" | "voice-profile" | "local-whisper"
   >("browser");
@@ -1777,6 +1778,17 @@ export function VoiceApp() {
     setRecordCopied(false);
     setRecordPdfDownloaded(false);
     setRecordMessage("");
+    setRecordDeleteRequested(false);
+    setRecordOpen(true);
+  };
+
+  const requestConsultationHistoryDeletion = () => {
+    if (!consultationTurns.length) return;
+    setRecordText(buildClinicalRecord(consultationTurns, selectedSpecialty));
+    setRecordCopied(false);
+    setRecordPdfDownloaded(false);
+    setRecordMessage("");
+    setRecordDeleteRequested(true);
     setRecordOpen(true);
   };
 
@@ -1822,6 +1834,7 @@ export function VoiceApp() {
     setRecordCopied(false);
     setRecordPdfDownloaded(false);
     setRecordMessage("");
+    setRecordDeleteRequested(false);
     setRecordOpen(false);
     clearPhrase();
     localStorage.removeItem("clara-active-consultation-v1");
@@ -2433,7 +2446,18 @@ export function VoiceApp() {
                       <strong>Mini-histórico desta consulta</strong>
                       <span>Salvo somente neste dispositivo até você copiar o prontuário.</span>
                     </div>
-                    <small>{consultationTurns.length} falas</small>
+                    <div className="history-heading-actions">
+                      <small>{consultationTurns.length} falas</small>
+                      <button
+                        className="history-delete-trigger"
+                        onClick={requestConsultationHistoryDeletion}
+                        disabled={!consultationTurns.length}
+                        title="Baixar o prontuário e excluir o mini-histórico"
+                        aria-label="Excluir mini-histórico desta consulta"
+                      >
+                        <Trash2 size={13} /> Excluir
+                      </button>
+                    </div>
                   </div>
                   {consultationTurns.length ? (
                     <div className="consultation-turns">
@@ -2656,10 +2680,19 @@ export function VoiceApp() {
               }}
               aria-label="Prontuário editável"
             />
-            {recordMessage ? (
-              <p className={`record-message ${recordCopied ? "success" : ""}`} role="status">
-                {recordMessage}
-              </p>
+            {(recordDeleteRequested && !recordPdfDownloaded) || recordMessage ? (
+              <div className="record-feedback">
+                {recordDeleteRequested && !recordPdfDownloaded ? (
+                  <p className="record-delete-notice" role="status">
+                    Para proteger seu registro, baixe o PDF antes de excluir o mini-histórico.
+                  </p>
+                ) : null}
+                {recordMessage ? (
+                  <p className={`record-message ${recordCopied || recordPdfDownloaded ? "success" : ""}`} role="status">
+                    {recordMessage}
+                  </p>
+                ) : null}
+              </div>
             ) : null}
             <div className="record-actions">
               <button className="secondary-button" onClick={() => setRecordOpen(false)}>

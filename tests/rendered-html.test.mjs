@@ -120,6 +120,9 @@ test("ships the clinical consultation voice workflow", async () => {
   assert.match(source, /Especialidade desta consulta/);
   assert.match(source, /Falas rápidas priorizadas/);
   assert.match(source, /Mini-histórico desta consulta/);
+  assert.match(source, /Excluir mini-histórico desta consulta/);
+  assert.match(source, /requestConsultationHistoryDeletion/);
+  assert.match(source, /baixe o PDF antes de excluir o mini-histórico/);
   assert.match(source, /Encerrar consulta e gerar prontuário/);
   assert.match(source, /Baixar prontuário em PDF/);
   assert.match(source, /Baixe o PDF para liberar a exclusão/);

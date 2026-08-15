@@ -476,6 +476,10 @@ h1 em { color: var(--green-2); font-weight: 500; }
 .consultation-history-heading strong { font-size: 13px; }
 .consultation-history-heading span, .consultation-history-heading small { color: var(--muted); font-size: 10px; line-height: 1.4; }
 .consultation-history-heading small { white-space: nowrap; }
+.consultation-history-heading > .history-heading-actions { display: flex; align-items: center; gap: 7px; }
+.history-delete-trigger { min-height: 27px; padding: 0 8px; border: 1px solid #d9aaa4; border-radius: 8px; background: #fff6f3; color: #8f3932; display: inline-flex; align-items: center; justify-content: center; gap: 4px; font-size: 9px; font-weight: 850; cursor: pointer; }
+.history-delete-trigger:hover:not(:disabled) { background: #ffe9e4; border-color: #c98f87; }
+.history-delete-trigger:disabled { opacity: .42; cursor: not-allowed; }
 .consultation-turns { max-height: 250px; overflow-y: auto; display: grid; gap: 6px; }
 .consultation-turn { display: grid; grid-template-columns: 54px 1fr auto; align-items: start; gap: 8px; padding: 8px 10px; border-radius: 9px; background: #f7f7f2; font-size: 10px; line-height: 1.4; }
 .consultation-turn strong { color: var(--green-2); }
@@ -506,6 +510,8 @@ h1 em { color: var(--green-2); font-weight: 500; }
 .record-textarea { width: 100%; min-height: 330px; resize: none; border: 1px solid var(--line); border-radius: 14px; background: #fbfbf7; color: var(--ink); padding: 16px; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .record-message { margin: 0; color: var(--danger); font-size: 11px; }
 .record-message.success { color: var(--green-2); }
+.record-feedback { display: grid; gap: 7px; }
+.record-delete-notice { margin: 0; padding: 9px 11px; border-radius: 10px; background: #fff5e7; color: #7b5422; font-size: 11px; line-height: 1.4; }
 .record-actions { display: flex; align-items: center; justify-content: flex-end; gap: 9px; flex-wrap: wrap; }
 .record-actions .primary-button, .record-actions .secondary-button { flex: 0 0 auto; min-height: 42px; }
 .delete-consultation-button { min-height: 42px; padding: 0 14px; border: 1px solid #d9aaa4; border-radius: 11px; background: #fff2ef; color: #8f3932; display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 850; cursor: pointer; }
