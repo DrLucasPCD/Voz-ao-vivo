@@ -2,9 +2,31 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /users/{userId}/{document=**} {
-      allow read, write: if request.auth != null
-                         && request.auth.uid == userId;
+    function ownsProfile(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    match /users/{userId}/voiceSamples/{sampleId} {
+      allow read, delete: if ownsProfile(userId);
+      allow create, update: if ownsProfile(userId)
+        && request.resource.data.keys().hasAll([
+          'cloudId', 'phrase', 'mimeType', 'createdAt', 'source',
+          'audioBytes', 'synced'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'cloudId', 'phrase', 'mimeType', 'createdAt', 'source', 'heard',
+          'durationMs', 'voiceSignature', 'speakerFingerprint', 'audioBytes', 'synced'
+        ])
+        && request.resource.data.audioBytes is bytes
+        && request.resource.data.audioBytes.size() < 700 * 1024
+        && request.resource.data.phrase is string
+        && request.resource.data.phrase.size() <= 1000
+        && request.resource.data.mimeType is string
+        && request.resource.data.mimeType.matches('audio/.*');
+    }
+
+    match /users/{userId}/profiles/{profileId} {
+      allow read, write: if ownsProfile(userId);
     }
   }
 }

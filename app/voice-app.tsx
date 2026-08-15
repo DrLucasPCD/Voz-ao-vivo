@@ -40,6 +40,10 @@ import {
   phrasesForSpecialty,
 } from "./clinical-phrases";
 import {
+  classifyNonOwnerSpeech,
+  prioritizeQuickQuestions,
+} from "./quick-clinical-questions";
+import {
   deleteCloudVoiceSample,
   downloadVoiceSample,
   loadCloudCorrections,
@@ -48,6 +52,11 @@ import {
   uploadVoiceSample,
   type CloudVoiceSample,
 } from "./cloud-voice-profile";
+import {
+  extractVoiceSignature,
+  identifyEnrolledSpeaker,
+  matchLocalVoiceProfile,
+} from "./local-voice-matcher";
 import {
   appleAuthProvider,
   appleSignInEnabled,
@@ -70,14 +79,11 @@ type RecognitionResultEvent = Event & {
 
 type RecognitionErrorEvent = Event & { error: string };
 
-type BrowserRecognitionPhrase = { phrase: string; boost: number };
-
 type BrowserRecognition = EventTarget & {
   lang: string;
   continuous: boolean;
   interimResults: boolean;
   maxAlternatives: number;
-  phrases?: BrowserRecognitionPhrase[];
   start: () => void;
   stop: () => void;
   abort: () => void;
@@ -92,10 +98,6 @@ declare global {
   interface Window {
     SpeechRecognition?: BrowserRecognitionConstructor;
     webkitSpeechRecognition?: BrowserRecognitionConstructor;
-    SpeechRecognitionPhrase?: new (
-      phrase: string,
-      boost?: number,
-    ) => BrowserRecognitionPhrase;
   }
 }
 
@@ -114,17 +116,13 @@ type TrainingSample = {
   source?: "guided" | "correction";
   heard?: string;
   durationMs?: number;
+  voiceSignature?: number[];
+  speakerFingerprint?: number[];
   cloudId?: string;
-  storagePath?: string;
+  audioBytes?: CloudVoiceSample["audioBytes"];
   synced?: boolean;
+  firestoreAudioSynced?: boolean;
 };
-
-const GENERAL_QUICK_PHRASES = [
-  "Qual é o principal motivo da consulta de hoje?",
-  "Quando esse sintoma começou?",
-  "Quais medicamentos você usa atualmente?",
-  "Você tem alergia a algum medicamento, alimento ou substância?",
-];
 
 const normalize = (value: string) =>
   value
@@ -290,7 +288,12 @@ function mergeTrainingSamples(
 
   remote.forEach((sample) => {
     const local = byCloudId.get(sample.cloudId);
-    byCloudId.set(sample.cloudId, { ...sample, ...local, synced: true });
+    byCloudId.set(sample.cloudId, {
+      ...sample,
+      ...local,
+      synced: true,
+      firestoreAudioSynced: true,
+    });
   });
 
   return [...byCloudId.values(), ...localOnly].sort((a, b) =>
@@ -308,6 +311,11 @@ function mergeCorrections(local: Correction[], remote: Correction[]) {
   );
 }
 
+function removeLastMatchingTurn(turns: string[], text: string) {
+  const index = turns.findLastIndex((turn) => normalize(turn) === normalize(text));
+  return index < 0 ? turns : turns.filter((_, turnIndex) => turnIndex !== index);
+}
+
 export function VoiceApp() {
   const [mode, setMode] = useState<"talk" | "train">("talk");
   const [user, setUser] = useState<User | null>(null);
@@ -322,16 +330,27 @@ export function VoiceApp() {
   const [interimTranscript, setInterimTranscript] = useState("");
   const [message, setMessage] = useState("Pronto para ouvir");
   const [error, setError] = useState("");
-  const [autoSpeak, setAutoSpeak] = useState(false);
-  const [cloudRecognition, setCloudRecognition] = useState(false);
+  const [autoSpeak, setAutoSpeak] = useState(true);
+  const [patientTurns, setPatientTurns] = useState<string[]>([]);
+  const [teamTurns, setTeamTurns] = useState<string[]>([]);
+  const [lastDetectedSpeaker, setLastDetectedSpeaker] = useState<
+    "doctor" | "patient" | "team" | null
+  >(null);
+  const [lastDetectedText, setLastDetectedText] = useState("");
+  const [showAllQuickQuestions, setShowAllQuickQuestions] = useState(false);
   const [transcriptionSource, setTranscriptionSource] = useState<
-    "browser" | "cloud" | "voice-profile"
+    "browser" | "voice-profile"
   >("browser");
   const [corrections, setCorrections] = useState<Correction[]>([]);
   const [correctionSaved, setCorrectionSaved] = useState(false);
   const recognitionRef = useRef<BrowserRecognition | null>(null);
   const latestFinalRef = useRef("");
-  const autoSpeakRef = useRef(false);
+  const latestContextualFinalRef = useRef("");
+  const autoSpeakRef = useRef(true);
+  const isAppSpeakingRef = useRef(false);
+  const lastSynthesizedTextRef = useRef("");
+  const synthesisEndedAtRef = useRef(0);
+  const startListeningRef = useRef<(() => void) | null>(null);
   const conversationRecorderRef = useRef<MediaRecorder | null>(null);
   const conversationChunksRef = useRef<Blob[]>([]);
   const conversationStreamRef = useRef<MediaStream | null>(null);
@@ -370,9 +389,8 @@ export function VoiceApp() {
 
   useEffect(() => {
     const savedCorrections = localStorage.getItem("clara-corrections");
-    const savedAutoSpeak = localStorage.getItem("clara-auto-speak") === "true";
-    const savedCloudRecognition =
-      localStorage.getItem("clara-cloud-recognition") === "true";
+    const savedAutoSpeakSetting = localStorage.getItem("clara-auto-speak");
+    const savedAutoSpeak = savedAutoSpeakSetting !== "false";
     const savedSpecialty = localStorage.getItem("clara-specialty");
     window.setTimeout(() => {
       if (savedCorrections) {
@@ -384,7 +402,6 @@ export function VoiceApp() {
       }
       setAutoSpeak(savedAutoSpeak);
       autoSpeakRef.current = savedAutoSpeak;
-      setCloudRecognition(savedCloudRecognition);
       if (savedSpecialty && CLINICAL_SPECIALTIES.includes(savedSpecialty)) {
         const savedPhrases = phrasesForSpecialty(savedSpecialty);
         setSelectedSpecialty(savedSpecialty);
@@ -393,9 +410,32 @@ export function VoiceApp() {
       }
     }, 0);
     getTrainingSamples()
-      .then((samples) => {
-        setTrainingSamples(samples);
-        setTrainingCount(samples.length);
+      .then(async (samples) => {
+        const upgraded: TrainingSample[] = [];
+        for (const sample of samples) {
+          if (
+            sample.blob &&
+            (!sample.voiceSignature?.length || !sample.speakerFingerprint?.length)
+          ) {
+            const signature = await extractVoiceSignature(sample.blob).catch(
+              () => null,
+            );
+            if (signature) {
+              const updated = {
+                ...sample,
+                durationMs: signature.durationMs,
+                voiceSignature: signature.features,
+                speakerFingerprint: signature.speakerFingerprint,
+              };
+              await updateTrainingSample(updated);
+              upgraded.push(updated);
+              continue;
+            }
+          }
+          upgraded.push(sample);
+        }
+        setTrainingSamples(upgraded);
+        setTrainingCount(upgraded.length);
       })
       .catch(() => undefined);
   }, []);
@@ -441,17 +481,25 @@ export function VoiceApp() {
 
         const localSamples = await getTrainingSamples();
         for (const sample of localSamples) {
-          if (!active || sample.cloudId || !sample.blob) continue;
+          if (!active || sample.firestoreAudioSynced || !sample.blob) continue;
           const cloudSample = await uploadVoiceSample(user.uid, {
+            cloudId: sample.cloudId,
             phrase: sample.phrase,
             heard: sample.heard,
             blob: sample.blob,
             mimeType: sample.mimeType,
             createdAt: sample.createdAt,
             durationMs: sample.durationMs,
+            voiceSignature: sample.voiceSignature,
+            speakerFingerprint: sample.speakerFingerprint,
             source: sample.source ?? "guided",
           });
-          const updated = { ...sample, ...cloudSample };
+          const updated = {
+            ...sample,
+            cloudId: cloudSample.cloudId,
+            synced: true,
+            firestoreAudioSynced: true,
+          };
           await updateTrainingSample(updated);
           setTrainingSamples((samples) =>
             samples.map((item) =>
@@ -483,10 +531,14 @@ export function VoiceApp() {
   }, [latestRecordingUrl]);
 
   const specialtyPhrases = phrasesForSpecialty(selectedSpecialty);
-  const quickPhrases =
-    selectedSpecialty === "Clínica geral"
-      ? GENERAL_QUICK_PHRASES
-      : specialtyPhrases.slice(0, 4).map((phrase) => phrase.text);
+  const patientContext = patientTurns.join(" ");
+  const prioritizedQuickQuestions = prioritizeQuickQuestions(
+    selectedSpecialty,
+    patientContext,
+  );
+  const visibleQuickQuestions = showAllQuickQuestions
+    ? prioritizedQuickQuestions
+    : prioritizedQuickQuestions.slice(0, 10);
   const recognitionVocabulary = Array.from(
     new Set([
       ...specialtyPhrases.map((phrase) => phrase.text),
@@ -494,13 +546,9 @@ export function VoiceApp() {
       ...corrections.map((correction) => correction.intended.trim()),
     ]),
   );
-  const hasVoiceReference = trainingSamples.some(
-    (sample) =>
-      sample.durationMs !== undefined &&
-      sample.durationMs >= 2000 &&
-      sample.durationMs <= 10000 &&
-      Boolean(sample.blob || sample.storagePath),
-  );
+  const localVoiceTemplateCount = trainingSamples.filter(
+    (sample) => sample.voiceSignature?.length,
+  ).length;
 
   const handleSignIn = async (
     provider: AuthProvider,
@@ -551,19 +599,27 @@ export function VoiceApp() {
   };
 
   const syncTrainingSample = async (sample: TrainingSample) => {
-    if (!user || !sample.blob || sample.cloudId) return sample;
+    if (!user || !sample.blob || sample.firestoreAudioSynced) return sample;
     setSyncStatus("syncing");
     try {
       const cloudSample = await uploadVoiceSample(user.uid, {
+        cloudId: sample.cloudId,
         phrase: sample.phrase,
         heard: sample.heard,
         blob: sample.blob,
         mimeType: sample.mimeType,
         createdAt: sample.createdAt,
         durationMs: sample.durationMs,
+        voiceSignature: sample.voiceSignature,
+        speakerFingerprint: sample.speakerFingerprint,
         source: sample.source ?? "guided",
       });
-      const updated = { ...sample, ...cloudSample };
+      const updated = {
+        ...sample,
+        cloudId: cloudSample.cloudId,
+        synced: true,
+        firestoreAudioSynced: true,
+      };
       await updateTrainingSample(updated);
       setTrainingSamples((samples) =>
         mergeTrainingSamples(
@@ -581,79 +637,12 @@ export function VoiceApp() {
     }
   };
 
-  const requestPersonalizedTranscription = async (audioBlob: Blob) => {
-    if (!user) throw new Error("Entre na sua conta para usar a nuvem.");
-
-    const referenceSample = trainingSamples.find(
-      (sample) =>
-        sample.durationMs !== undefined &&
-        sample.durationMs >= 2000 &&
-        sample.durationMs <= 10000 &&
-        Boolean(sample.blob || sample.storagePath),
-    );
-    let referenceBlob: Blob | null = null;
-    if (referenceSample?.blob) referenceBlob = referenceSample.blob;
-    else if (referenceSample?.storagePath) {
-      try {
-        referenceBlob = await downloadVoiceSample(referenceSample.storagePath);
-      } catch {
-        referenceBlob = null;
-      }
-    }
-
-    const token = await user.getIdToken();
-    const body = new FormData();
-    const audioExtension = audioBlob.type.includes("ogg") ? "ogg" : "webm";
-    body.append(
-      "audio",
-      new File([audioBlob], `fala.${audioExtension}`, {
-        type: audioBlob.type || "audio/webm",
-      }),
-    );
-    body.append("specialty", selectedSpecialty);
-    body.append(
-      "vocabulary",
-      JSON.stringify(recognitionVocabulary.slice(0, 60)),
-    );
-    body.append(
-      "corrections",
-      JSON.stringify(
-        corrections.slice(-50).map((correction) => correction.intended),
-      ),
-    );
-    if (referenceBlob) {
-      const extension = referenceBlob.type.includes("ogg") ? "ogg" : "webm";
-      body.append(
-        "voiceReference",
-        new File([referenceBlob], `referencia.${extension}`, {
-          type: referenceBlob.type || "audio/webm",
-        }),
-      );
-    }
-
-    const response = await fetch("/.netlify/functions/transcribe", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-      body,
-    });
-    const payload = (await response.json().catch(() => ({}))) as {
-      text?: string;
-      error?: string;
-      usedVoiceReference?: boolean;
-    };
-    if (!response.ok || !payload.text) {
-      throw new Error(
-        payload.error ?? "A transcrição em nuvem não está disponível.",
-      );
-    }
-    return {
-      text: payload.text,
-      usedVoiceReference: Boolean(payload.usedVoiceReference),
-    };
-  };
-
-  const speak = useCallback((text: string) => {
+  const speak = useCallback((text: string, resumeListening = false) => {
     if (!text.trim() || !("speechSynthesis" in window)) return;
+    recognitionRef.current?.abort();
+    if (conversationRecorderRef.current?.state === "recording") {
+      conversationRecorderRef.current.stop();
+    }
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text.trim());
     const voices = window.speechSynthesis.getVoices();
@@ -665,14 +654,26 @@ export function VoiceApp() {
     utterance.rate = 0.92;
     utterance.pitch = 1;
     utterance.onstart = () => {
+      isAppSpeakingRef.current = true;
+      lastSynthesizedTextRef.current = text.trim();
       setIsSpeaking(true);
       setMessage("Falando em voz clara");
     };
     utterance.onend = () => {
+      isAppSpeakingRef.current = false;
+      synthesisEndedAtRef.current = Date.now();
       setIsSpeaking(false);
-      setMessage("Pronto para ouvir");
+      setMessage(
+        resumeListening
+          ? "Áudio concluído; preparando escuta automática…"
+          : "Pronto para ouvir",
+      );
+      if (resumeListening) {
+        window.setTimeout(() => startListeningRef.current?.(), 550);
+      }
     };
     utterance.onerror = () => {
+      isAppSpeakingRef.current = false;
       setIsSpeaking(false);
       setMessage("Não consegui reproduzir o áudio");
     };
@@ -681,19 +682,20 @@ export function VoiceApp() {
 
   const stopSpeaking = () => {
     window.speechSynthesis?.cancel();
+    isAppSpeakingRef.current = false;
     setIsSpeaking(false);
     setMessage("Pronto para ouvir");
   };
 
   const startListening = async () => {
+    if (isAppSpeakingRef.current) return;
     setError("");
     setCorrectionSaved(false);
     setPendingCorrectionAudio(null);
     pendingCorrectionDurationMsRef.current = 0;
     setIsPreparingCorrectionAudio(false);
     const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
-    const cloudEnabledForTurn = cloudRecognition && Boolean(user);
-    if (!Recognition && !cloudEnabledForTurn) {
+    if (!Recognition) {
       setError("O reconhecimento de voz ainda não funciona neste navegador. Abra o app no Chrome ou Edge.");
       return;
     }
@@ -704,7 +706,7 @@ export function VoiceApp() {
         audio: { echoCancellation: true, noiseSuppression: true },
       });
       conversationStreamRef.current = stream;
-      const recorder = new MediaRecorder(stream);
+      const recorder = new MediaRecorder(stream, { audioBitsPerSecond: 24000 });
       conversationRecorderRef.current = recorder;
       conversationChunksRef.current = [];
       recorder.ondataavailable = (event) => {
@@ -719,55 +721,122 @@ export function VoiceApp() {
           const recordedAudio = new Blob(conversationChunksRef.current, {
             type: recorder.mimeType,
           });
+          let speakerIdentification = {
+            ready: false,
+            isOwner: true,
+            confidence: 0,
+            sampleCount: 0,
+          };
+          try {
+            const currentSignature = await extractVoiceSignature(recordedAudio);
+            speakerIdentification = identifyEnrolledSpeaker(
+              currentSignature,
+              trainingSamples,
+            );
+          } catch {
+            // Sem assinatura válida, o turno permanece como fala do usuário.
+          }
+
+          const topTranscript = latestFinalRef.current.trim();
+          const looksLikeAppEcho =
+            topTranscript &&
+            Date.now() - synthesisEndedAtRef.current < 3500 &&
+            similarity(topTranscript, lastSynthesizedTextRef.current) >= 0.86;
+          if (looksLikeAppEcho) {
+            setMessage("Áudio emitido pela própria Clara foi ignorado");
+            stream.getTracks().forEach((track) => track.stop());
+            conversationStreamRef.current = null;
+            setIsPreparingCorrectionAudio(false);
+            return;
+          }
+          if (speakerIdentification.ready && !speakerIdentification.isOwner) {
+            setPendingCorrectionAudio(null);
+            if (topTranscript) {
+              const role = classifyNonOwnerSpeech(topTranscript);
+              setLastDetectedSpeaker(role);
+              setLastDetectedText(topTranscript);
+              if (role === "patient") {
+                setPatientTurns((turns) => [...turns, topTranscript].slice(-20));
+              } else {
+                setTeamTurns((turns) => [...turns, topTranscript].slice(-20));
+              }
+              setError("");
+              setMessage(
+                role === "patient"
+                  ? "Paciente identificado; prioridades atualizadas"
+                  : "Equipe ou preceptoria identificada",
+              );
+            } else {
+              setLastDetectedSpeaker("patient");
+              setLastDetectedText("");
+              setMessage("Paciente identificado, mas não consegui transcrever a resposta");
+            }
+            stream.getTracks().forEach((track) => track.stop());
+            conversationStreamRef.current = null;
+            setIsPreparingCorrectionAudio(false);
+            return;
+          }
+
+          setLastDetectedSpeaker("doctor");
+          setLastDetectedText(
+            latestContextualFinalRef.current.trim() || topTranscript,
+          );
           setPendingCorrectionAudio(recordedAudio);
           pendingCorrectionDurationMsRef.current = durationMs;
 
-          if (cloudEnabledForTurn) {
-            setMessage("Aprimorando com seu perfil de voz…");
-            try {
-              const cloudResult =
-                await requestPersonalizedTranscription(recordedAudio);
-              const cloudText = cloudResult.text.trim();
-              const corrected = applyLearnedCorrection(
-                cloudText,
+          let recognizedText =
+            latestContextualFinalRef.current.trim() || topTranscript;
+          let finalText = recognizedText
+            ? applyLearnedCorrection(
+                recognizedText,
                 corrections,
                 recognitionVocabulary,
+              )
+            : "";
+          let usedVoiceProfile = false;
+
+          if (localVoiceTemplateCount > 0) {
+            setMessage("Comparando com suas amostras de voz…");
+            try {
+              const match = await matchLocalVoiceProfile(
+                recordedAudio,
+                trainingSamples,
               );
-              latestFinalRef.current = cloudText;
-              setRawTranscript(cloudText);
-              setTranscript(corrected);
-              setTranscriptionSource(
-                cloudResult.usedVoiceReference ? "voice-profile" : "cloud",
-              );
-              setError("");
-              setMessage(
-                cloudResult.usedVoiceReference
-                  ? "Reconhecida com sua referência de voz"
-                  : "Reconhecida pela nuvem clínica",
-              );
-              if (autoSpeakRef.current) speak(corrected);
-            } catch (cloudError) {
-              const cloudMessage =
-                cloudError instanceof Error
-                  ? cloudError.message
-                  : "A nuvem não está disponível.";
-              setTranscriptionSource("browser");
-              setError(`${cloudMessage} Mantive o resultado do navegador.`);
-              setMessage(
-                latestFinalRef.current
-                  ? "Frase reconhecida pelo navegador"
-                  : "Não consegui entender esta fala",
-              );
-              if (autoSpeakRef.current && latestFinalRef.current) {
-                speak(
-                  applyLearnedCorrection(
-                    latestFinalRef.current,
-                    corrections,
-                    recognitionVocabulary,
-                  ),
-                );
+              if (match) {
+                const textSupport = recognizedText
+                  ? similarity(recognizedText, match.phrase)
+                  : 0;
+                const examplesForPhrase = trainingSamples.filter(
+                  (sample) => normalize(sample.phrase) === normalize(match.phrase),
+                ).length;
+                const supportedByText = match.score >= 0.82 && textSupport >= 0.38;
+                const supportedByRepeatedVoice =
+                  !recognizedText && match.score >= 0.94 && examplesForPhrase >= 2;
+                if (supportedByText || supportedByRepeatedVoice) {
+                  finalText = match.phrase;
+                  usedVoiceProfile = true;
+                }
               }
+            } catch {
+              // O reconhecimento do navegador e as correções continuam disponíveis.
             }
+          }
+
+          if (finalText) {
+            if (!recognizedText) recognizedText = finalText;
+            latestFinalRef.current = recognizedText;
+            setRawTranscript(recognizedText);
+            setTranscript(finalText);
+            setTranscriptionSource(usedVoiceProfile ? "voice-profile" : "browser");
+            setError("");
+            setMessage(
+              usedVoiceProfile
+                ? "Frase reconhecida pelo seu perfil de voz local"
+                : "Frase reconhecida gratuitamente",
+            );
+            if (autoSpeakRef.current) speak(finalText, true);
+          } else {
+            setMessage("Não consegui entender esta fala");
           }
         }
         stream.getTracks().forEach((track) => track.stop());
@@ -781,37 +850,23 @@ export function VoiceApp() {
       return;
     }
 
-    if (!Recognition) {
-      recognitionRef.current = null;
-      setIsListening(true);
-      setMessage("Estou ouvindo você pela nuvem…");
-      return;
-    }
-
     const recognition = new Recognition();
     recognition.lang = "pt-BR";
     recognition.continuous = false;
     recognition.interimResults = true;
     recognition.maxAlternatives = 5;
-    const RecognitionPhrase = window.SpeechRecognitionPhrase;
-    if (RecognitionPhrase && "phrases" in recognition) {
-      try {
-        recognition.phrases = recognitionVocabulary
-          .slice(0, 60)
-          .map((phrase) => new RecognitionPhrase(phrase, 5));
-      } catch {
-        // Contextual biasing is experimental; the alternatives below remain active.
-      }
-    }
     latestFinalRef.current = "";
+    latestContextualFinalRef.current = "";
 
     recognition.onresult = (event) => {
-      let finalText = "";
+      let topFinalText = "";
+      let contextualFinalText = "";
       let interimText = "";
       for (let index = event.resultIndex; index < event.results.length; index += 1) {
         const result = event.results[index];
         if (result.isFinal) {
-          finalText += bestRecognitionAlternative(
+          topFinalText += result[0].transcript;
+          contextualFinalText += bestRecognitionAlternative(
             result,
             recognitionVocabulary,
           );
@@ -819,18 +874,10 @@ export function VoiceApp() {
         else interimText += result[0].transcript;
       }
       setInterimTranscript(interimText);
-      if (finalText.trim()) {
-        const cleanText = finalText.trim();
-        latestFinalRef.current = cleanText;
-        setTranscriptionSource("browser");
-        setRawTranscript(cleanText);
-        setTranscript(
-          applyLearnedCorrection(
-            cleanText,
-            corrections,
-            recognitionVocabulary,
-          ),
-        );
+      if (isAppSpeakingRef.current) return;
+      if (topFinalText.trim()) latestFinalRef.current = topFinalText.trim();
+      if (contextualFinalText.trim()) {
+        latestContextualFinalRef.current = contextualFinalText.trim();
       }
     };
 
@@ -841,13 +888,12 @@ export function VoiceApp() {
         "no-speech": "Não ouvi uma frase. Vamos tentar novamente?",
         network: "A conexão falhou durante o reconhecimento. Tente novamente.",
       };
-      if (cloudEnabledForTurn) {
-        setError("");
-        setMessage("O navegador não entendeu; tentando seu perfil na nuvem…");
-      } else {
-        setError(messages[event.error] ?? "Não consegui entender desta vez. Tente novamente.");
-        setMessage("Pronto para tentar novamente");
-      }
+      setError(messages[event.error] ?? "Não consegui entender desta vez. Tente novamente.");
+      setMessage(
+        localVoiceTemplateCount
+          ? "Tentando reconhecer pelas suas amostras…"
+          : "Pronto para tentar novamente",
+      );
       setIsListening(false);
     };
 
@@ -855,8 +901,8 @@ export function VoiceApp() {
       setIsListening(false);
       setInterimTranscript("");
       setMessage(
-        cloudEnabledForTurn
-          ? "Preparando transcrição personalizada…"
+        localVoiceTemplateCount
+          ? "Analisando seu perfil de voz local…"
           : latestFinalRef.current
             ? "Frase reconhecida"
             : "Pronto para ouvir",
@@ -865,19 +911,11 @@ export function VoiceApp() {
         setIsPreparingCorrectionAudio(true);
         conversationRecorderRef.current.stop();
       }
-      if (!cloudEnabledForTurn && autoSpeakRef.current && latestFinalRef.current) {
-        const corrected = applyLearnedCorrection(
-          latestFinalRef.current,
-          corrections,
-          recognitionVocabulary,
-        );
-        window.setTimeout(() => speak(corrected), 180);
-      }
     };
 
     recognitionRef.current = recognition;
     setIsListening(true);
-    setMessage("Estou ouvindo você…");
+    setMessage("Estou ouvindo e identificando o falante…");
     try {
       recognition.start();
     } catch {
@@ -888,6 +926,10 @@ export function VoiceApp() {
       setError("Não consegui iniciar a escuta. Tente novamente.");
     }
   };
+
+  useEffect(() => {
+    startListeningRef.current = startListening;
+  });
 
   const stopListening = () => {
     recognitionRef.current?.stop();
@@ -922,13 +964,21 @@ export function VoiceApp() {
     }
 
     if (pendingCorrectionAudio) {
+      const signature = await extractVoiceSignature(pendingCorrectionAudio).catch(
+        () => null,
+      );
       const saved = await storeTrainingSample({
         phrase: transcript.trim(),
         heard: rawTranscript.trim(),
         blob: pendingCorrectionAudio,
         mimeType: pendingCorrectionAudio.type,
         createdAt,
-        durationMs: pendingCorrectionDurationMsRef.current,
+        durationMs:
+          signature?.durationMs ?? pendingCorrectionDurationMsRef.current,
+        ...(signature ? { voiceSignature: signature.features } : {}),
+        ...(signature
+          ? { speakerFingerprint: signature.speakerFingerprint }
+          : {}),
         source: "correction",
       });
       setTrainingSamples((samples) => [saved, ...samples]);
@@ -954,6 +1004,36 @@ export function VoiceApp() {
     setTranscriptionSource("browser");
   };
 
+  const relabelLastSpeaker = (role: "doctor" | "patient" | "team") => {
+    const text = lastDetectedText.trim();
+    if (!text || role === lastDetectedSpeaker) return;
+
+    setPatientTurns((turns) => removeLastMatchingTurn(turns, text));
+    setTeamTurns((turns) => removeLastMatchingTurn(turns, text));
+    if (role === "patient") {
+      setPatientTurns((turns) => [...turns, text].slice(-20));
+      if (lastDetectedSpeaker === "doctor" && normalize(rawTranscript) === normalize(text)) {
+        clearPhrase();
+      }
+      setMessage("Turno corrigido para paciente; prioridades atualizadas");
+    } else if (role === "team") {
+      setTeamTurns((turns) => [...turns, text].slice(-20));
+      if (lastDetectedSpeaker === "doctor" && normalize(rawTranscript) === normalize(text)) {
+        clearPhrase();
+      }
+      setMessage("Turno corrigido para equipe ou preceptoria");
+    } else {
+      setRawTranscript(text);
+      setTranscript(applyLearnedCorrection(text, corrections, recognitionVocabulary));
+      setTranscriptionSource("browser");
+      setMessage("Turno corrigido para sua fala");
+      if (autoSpeakRef.current) {
+        speak(applyLearnedCorrection(text, corrections, recognitionVocabulary), true);
+      }
+    }
+    setLastDetectedSpeaker(role);
+  };
+
   const toggleAutoSpeak = () => {
     const next = !autoSpeak;
     setAutoSpeak(next);
@@ -961,26 +1041,12 @@ export function VoiceApp() {
     localStorage.setItem("clara-auto-speak", String(next));
   };
 
-  const toggleCloudRecognition = () => {
-    if (!user) {
-      setError("Entre na sua conta antes de ativar o reconhecimento personalizado.");
-      return;
-    }
-    const next = !cloudRecognition;
-    setCloudRecognition(next);
-    localStorage.setItem("clara-cloud-recognition", String(next));
-    setError("");
-    setMessage(
-      next
-        ? "Reconhecimento personalizado ativado"
-        : "Reconhecimento do navegador ativado",
-    );
-  };
-
   const playQuickPhrase = (phrase: string) => {
     setRawTranscript("");
     setTranscript(phrase);
-    speak(phrase);
+    setLastDetectedSpeaker("doctor");
+    setLastDetectedText(phrase);
+    speak(phrase, true);
   };
 
   const selectSpecialty = (specialtyName: string) => {
@@ -989,6 +1055,7 @@ export function VoiceApp() {
     setPromptIndex(0);
     setTrainingPhrase(nextPhrases[0].text);
     setTrainingMessage("Leia a frase no seu ritmo");
+    setShowAllQuickQuestions(false);
     localStorage.setItem("clara-specialty", specialtyName);
   };
 
@@ -1006,7 +1073,7 @@ export function VoiceApp() {
         audio: { echoCancellation: true, noiseSuppression: true },
       });
       streamRef.current = stream;
-      const recorder = new MediaRecorder(stream);
+      const recorder = new MediaRecorder(stream, { audioBitsPerSecond: 24000 });
       recorderRef.current = recorder;
       recordingChunksRef.current = [];
       recorder.ondataavailable = (event) => {
@@ -1018,12 +1085,17 @@ export function VoiceApp() {
           0,
           new Date().getTime() - trainingStartedAtRef.current,
         );
+        const signature = await extractVoiceSignature(blob).catch(() => null);
         const saved = await storeTrainingSample({
           phrase: trainingPhrase.trim(),
           blob,
           mimeType: recorder.mimeType,
           createdAt: new Date().toISOString(),
-          durationMs,
+          durationMs: signature?.durationMs ?? durationMs,
+          ...(signature ? { voiceSignature: signature.features } : {}),
+          ...(signature
+            ? { speakerFingerprint: signature.speakerFingerprint }
+            : {}),
           source: "guided",
         });
         if (latestRecordingUrl) URL.revokeObjectURL(latestRecordingUrl);
@@ -1057,8 +1129,11 @@ export function VoiceApp() {
     try {
       const blob =
         sample.blob ??
-        (sample.storagePath
-          ? await downloadVoiceSample(sample.storagePath)
+        (sample.audioBytes
+          ? await downloadVoiceSample({
+              audioBytes: sample.audioBytes,
+              mimeType: sample.mimeType,
+            })
           : null);
       if (!blob) throw new Error("Amostra sem áudio");
       const url = URL.createObjectURL(blob);
@@ -1073,11 +1148,10 @@ export function VoiceApp() {
 
   const deleteTrainingSample = async (sample: TrainingSample) => {
     try {
-      if (sample.cloudId && sample.storagePath && user) {
+      if (sample.cloudId && user) {
         setSyncStatus("syncing");
         await deleteCloudVoiceSample(user.uid, {
           cloudId: sample.cloudId,
-          storagePath: sample.storagePath,
         });
       }
       if (sample.id !== undefined) await removeTrainingSample(sample.id);
@@ -1108,8 +1182,11 @@ export function VoiceApp() {
         const sample = trainingSamples[index];
         const blob =
           sample.blob ??
-          (sample.storagePath
-            ? await downloadVoiceSample(sample.storagePath)
+          (sample.audioBytes
+            ? await downloadVoiceSample({
+                audioBytes: sample.audioBytes,
+                mimeType: sample.mimeType,
+              })
             : null);
         if (!blob) continue;
         const extension = sample.mimeType.includes("ogg") ? "ogg" : "webm";
@@ -1262,8 +1339,8 @@ export function VoiceApp() {
                   {isListening ? <CircleStop size={50} strokeWidth={1.5} /> : <Mic size={50} strokeWidth={1.5} />}
                 </button>
                 <div className="mic-instruction">
-                  <strong>{isListening ? "Pode falar. Estou ouvindo." : "Toque para começar a falar"}</strong>
-                  <span>{isListening ? "Toque novamente quando terminar" : "Fale naturalmente, no seu ritmo"}</span>
+                  <strong>{isListening ? "Pode falar. Estou identificando a voz." : "Toque para ouvir qualquer pessoa"}</strong>
+                  <span>{isListening ? "Toque novamente quando terminar" : "Minha fala, paciente ou equipe serão separados automaticamente"}</span>
                 </div>
               </article>
 
@@ -1275,10 +1352,8 @@ export function VoiceApp() {
                     {transcript && (
                       <span className={`transcription-source ${transcriptionSource}`}>
                         {transcriptionSource === "voice-profile"
-                          ? "Perfil de voz personalizado"
-                          : transcriptionSource === "cloud"
-                            ? "Nuvem clínica"
-                            : "Reconhecimento do navegador"}
+                          ? "Perfil de voz local e gratuito"
+                          : "Reconhecimento gratuito do navegador"}
                       </span>
                     )}
                   </div>
@@ -1305,7 +1380,7 @@ export function VoiceApp() {
                 <div className="message-actions">
                   <button
                     className="primary-button"
-                    onClick={isSpeaking ? stopSpeaking : () => speak(transcript)}
+                    onClick={isSpeaking ? stopSpeaking : () => speak(transcript, true)}
                     disabled={!transcript.trim()}
                   >
                     {isSpeaking ? <Pause size={20} /> : <Volume2 size={20} />}
@@ -1326,50 +1401,93 @@ export function VoiceApp() {
               </article>
             </section>
 
-            <article className={`cloud-recognition-card ${cloudRecognition && user ? "active" : ""}`}>
-              <div className="cloud-recognition-icon"><Cloud size={22} /></div>
+            <article className="speaker-detection-card" aria-live="polite">
               <div>
-                <strong>Reconhecimento personalizado na nuvem</strong>
+                <strong>Identificação automática de quem está falando</strong>
                 <span>
-                  {user
-                    ? "Usa uma amostra curta da sua voz, suas correções e os termos da especialidade para melhorar a transcrição."
-                    : "Entre na sua conta para usar seu perfil de voz sincronizado."}
+                  {lastDetectedSpeaker === "doctor"
+                    ? "Minha fala"
+                    : lastDetectedSpeaker === "patient"
+                      ? "Paciente"
+                      : lastDetectedSpeaker === "team"
+                        ? "Equipe, colega ou preceptoria"
+                        : localVoiceTemplateCount >= 3
+                          ? "Pronta para identificar o próximo turno"
+                          : `Grave mais ${Math.max(0, 3 - localVoiceTemplateCount)} amostras da sua voz para ativar`}
+                </span>
+                {lastDetectedText ? <small>“{lastDetectedText}”</small> : null}
+              </div>
+              {lastDetectedText ? (
+                <div className="speaker-correction" aria-label="Corrigir falante identificado">
+                  <button onClick={() => relabelLastSpeaker("doctor")}>Era minha fala</button>
+                  <button onClick={() => relabelLastSpeaker("patient")}>Era o paciente</button>
+                  <button onClick={() => relabelLastSpeaker("team")}>Era da equipe</button>
+                </div>
+              ) : null}
+            </article>
+
+            <article className="free-recognition-card">
+              <div className="free-recognition-icon"><Check size={22} /></div>
+              <div>
+                <strong>Reconhecimento personalizado gratuito</strong>
+                <span>
+                  O navegador reconhece a fala e a Clara compara o ritmo e as
+                  frequências com suas amostras treinadas, sem API paga.
                 </span>
                 <small>
-                  {hasVoiceReference
-                    ? "Sua referência curta de voz está pronta. "
-                    : "Grave uma frase de 2 a 10 segundos para criar a referência de voz. "}
-                  Quando ativado, sua fala é enviada à API da OpenAI. Evite falar dados identificáveis do paciente.
+                  {localVoiceTemplateCount
+                    ? `${localVoiceTemplateCount} assinaturas acústicas disponíveis. `
+                    : "Grave cada pergunta duas vezes para fortalecer o reconhecimento local. "}
+                  Com login, as amostras pequenas são sincronizadas no limite gratuito do Firestore.
                 </small>
               </div>
-              <button
-                className={`toggle ${cloudRecognition && user ? "on" : ""}`}
-                onClick={toggleCloudRecognition}
-                role="switch"
-                aria-checked={Boolean(cloudRecognition && user)}
-                aria-label="Ativar reconhecimento personalizado na nuvem"
-                disabled={!user || isListening}
-              ><span /></button>
+              <span className="free-badge">R$ 0</span>
             </article>
 
             <section className="lower-grid">
               <article className="quick-card">
                 <div className="small-card-heading">
-                  <span><Sparkles size={16} /> Perguntas rápidas</span>
-                  <small>Um toque para perguntar</small>
+                  <span><Sparkles size={16} /> Perguntas rápidas priorizadas</span>
+                  <small>{prioritizedQuickQuestions.length} opções em {selectedSpecialty}</small>
+                </div>
+                <div className="patient-context-box">
+                  <strong>Contexto ouvido do paciente</strong>
+                  <span>
+                    {patientTurns.length
+                      ? patientTurns.slice(-3).join(" • ")
+                      : "Quando outra voz relatar sintomas, as perguntas serão reordenadas automaticamente."}
+                  </span>
+                  {patientTurns.length ? (
+                    <button onClick={() => setPatientTurns([])}>Limpar contexto</button>
+                  ) : null}
                 </div>
                 <div className="quick-list">
-                  {quickPhrases.map((phrase) => (
-                    <button key={phrase} onClick={() => playQuickPhrase(phrase)}>{phrase}<Play size={14} fill="currentColor" /></button>
+                  {visibleQuickQuestions.map((question) => (
+                    <button key={question.id} onClick={() => playQuickPhrase(question.text)}>
+                      {question.text}<Play size={14} fill="currentColor" />
+                    </button>
                   ))}
                 </div>
+                <button
+                  className="show-questions-button"
+                  onClick={() => setShowAllQuickQuestions((visible) => !visible)}
+                >
+                  {showAllQuickQuestions
+                    ? "Mostrar somente as 10 prioritárias"
+                    : `Ver todas as ${prioritizedQuickQuestions.length} perguntas`}
+                </button>
+                {teamTurns.length ? (
+                  <p className="team-context-note">
+                    <strong>Equipe/preceptoria:</strong> {teamTurns.slice(-2).join(" • ")}
+                  </p>
+                ) : null}
               </article>
 
               <article className="auto-card">
                 <div className="auto-icon"><Headphones size={22} /></div>
                 <div>
                   <strong>Reprodução automática</strong>
-                  <span>Fala a mensagem assim que você termina</span>
+                  <span>Emite somente sua fala e depois reabre o microfone sem captar o próprio áudio</span>
                 </div>
                 <button
                   className={`toggle ${autoSpeak ? "on" : ""}`}

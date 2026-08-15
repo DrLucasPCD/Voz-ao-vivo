@@ -1,0 +1,20 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    {
+      "collectionGroup": "voiceSamples",
+      "fieldPath": "audioBytes",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "voiceSamples",
+      "fieldPath": "voiceSignature",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "voiceSamples",
+      "fieldPath": "speakerFingerprint",
+      "indexes": []
+    }
+  ]
+}

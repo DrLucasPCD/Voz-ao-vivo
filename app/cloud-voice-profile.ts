@@ -1,4 +1,5 @@
 import {
+  Bytes,
   collection,
   deleteDoc,
   doc,
@@ -8,13 +9,9 @@ import {
   query,
   setDoc,
 } from "firebase/firestore";
-import {
-  deleteObject,
-  getBlob,
-  ref,
-  uploadBytes,
-} from "firebase/storage";
-import { firebaseDb, firebaseStorage } from "./firebase";
+import { firebaseDb } from "./firebase";
+
+export const MAX_SYNCED_AUDIO_BYTES = 700 * 1024;
 
 export type CloudCorrection = {
   heard: string;
@@ -30,24 +27,25 @@ export type CloudVoiceSample = {
   source: "guided" | "correction";
   heard?: string;
   durationMs?: number;
-  storagePath: string;
+  voiceSignature?: number[];
+  speakerFingerprint?: number[];
+  audioBytes: Bytes;
   synced: true;
 };
 
-type UploadableSample = Omit<CloudVoiceSample, "cloudId" | "storagePath" | "synced"> & {
+type UploadableSample = Omit<CloudVoiceSample, "cloudId" | "audioBytes" | "synced"> & {
   cloudId?: string;
   blob: Blob;
 };
 
 export async function uploadVoiceSample(uid: string, sample: UploadableSample) {
   const cloudId = sample.cloudId ?? crypto.randomUUID();
-  const extension = sample.mimeType.includes("ogg") ? "ogg" : "webm";
-  const storagePath = `users/${uid}/voice-samples/${cloudId}.${extension}`;
-
-  await uploadBytes(ref(firebaseStorage, storagePath), sample.blob, {
-    contentType: sample.mimeType,
-    customMetadata: { ownerUid: uid },
-  });
+  if (sample.blob.size > MAX_SYNCED_AUDIO_BYTES) {
+    throw new Error("A amostra excede o limite gratuito de sincronização.");
+  }
+  const audioBytes = Bytes.fromUint8Array(
+    new Uint8Array(await sample.blob.arrayBuffer()),
+  );
 
   const cloudSample: CloudVoiceSample = {
     cloudId,
@@ -55,10 +53,14 @@ export async function uploadVoiceSample(uid: string, sample: UploadableSample) {
     mimeType: sample.mimeType,
     createdAt: sample.createdAt,
     source: sample.source,
-    storagePath,
+    audioBytes,
     synced: true,
     ...(sample.heard ? { heard: sample.heard } : {}),
     ...(sample.durationMs ? { durationMs: sample.durationMs } : {}),
+    ...(sample.voiceSignature ? { voiceSignature: sample.voiceSignature } : {}),
+    ...(sample.speakerFingerprint
+      ? { speakerFingerprint: sample.speakerFingerprint }
+      : {}),
   };
 
   await setDoc(
@@ -91,18 +93,20 @@ export function subscribeToVoiceSamples(
   );
 }
 
-export async function downloadVoiceSample(storagePath: string) {
-  return getBlob(ref(firebaseStorage, storagePath));
+export async function downloadVoiceSample(
+  sample: Pick<CloudVoiceSample, "audioBytes" | "mimeType">,
+) {
+  const storedBytes = sample.audioBytes.toUint8Array();
+  const audioBuffer = new ArrayBuffer(storedBytes.byteLength);
+  new Uint8Array(audioBuffer).set(storedBytes);
+  return new Blob([audioBuffer], { type: sample.mimeType });
 }
 
 export async function deleteCloudVoiceSample(
   uid: string,
-  sample: Pick<CloudVoiceSample, "cloudId" | "storagePath">,
+  sample: Pick<CloudVoiceSample, "cloudId">,
 ) {
-  await Promise.all([
-    deleteDoc(doc(firebaseDb, "users", uid, "voiceSamples", sample.cloudId)),
-    deleteObject(ref(firebaseStorage, sample.storagePath)),
-  ]);
+  await deleteDoc(doc(firebaseDb, "users", uid, "voiceSamples", sample.cloudId));
 }
 
 export async function loadCloudCorrections(uid: string) {

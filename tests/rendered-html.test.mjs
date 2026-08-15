@@ -18,25 +18,22 @@ test("is configured as a standard Next.js app for Netlify", async () => {
   assert.match(netlifyConfig, /Permissions-Policy = "microphone=\(self\)"/);
 });
 
-test("ships authenticated personalized cloud transcription", async () => {
-  const [source, functionSource, netlifyConfig, exampleEnv] = await Promise.all([
+test("ships personalized recognition without a paid API", async () => {
+  const [source, matcherSource, netlifyConfig, exampleEnv] = await Promise.all([
     readFile(new URL("app/voice-app.tsx", root), "utf8"),
-    readFile(new URL("netlify/functions/transcribe.ts", root), "utf8"),
+    readFile(new URL("app/local-voice-matcher.ts", root), "utf8"),
     readFile(new URL("netlify.toml", root), "utf8"),
     readFile(new URL(".env.example", root), "utf8"),
   ]);
 
-  assert.match(source, /Reconhecimento personalizado na nuvem/);
-  assert.match(source, /requestPersonalizedTranscription/);
-  assert.match(source, /voiceReference/);
-  assert.match(functionSource, /accounts:lookup/);
-  assert.match(functionSource, /ALLOWED_FIREBASE_EMAILS/);
-  assert.match(functionSource, /gpt-transcribe/);
-  assert.match(functionSource, /known_speaker_references\[\]/);
-  assert.match(functionSource, /keywords\[\]/);
-  assert.match(netlifyConfig, /directory = "netlify\/functions"/);
-  assert.match(exampleEnv, /OPENAI_API_KEY=/);
-  assert.doesNotMatch(exampleEnv, /sk-[A-Za-z0-9]/);
+  assert.match(source, /Reconhecimento personalizado gratuito/);
+  assert.match(source, /matchLocalVoiceProfile/);
+  assert.match(source, /assinaturas acústicas/);
+  assert.match(matcherSource, /extractVoiceSignature/);
+  assert.match(matcherSource, /compareVoiceSignatures/);
+  assert.doesNotMatch(source, /OpenAI|requestPersonalizedTranscription/);
+  assert.doesNotMatch(netlifyConfig, /\[functions\]/);
+  assert.doesNotMatch(exampleEnv, /OPENAI|API_KEY/);
 });
 
 test("ships the clinical consultation voice workflow", async () => {
@@ -58,18 +55,20 @@ test("ships the clinical consultation voice workflow", async () => {
   assert.match(source, /MediaRecorder/);
   assert.match(source, /perfil-de-voz-clara/);
   assert.match(source, /maxAlternatives = 5/);
-  assert.match(source, /SpeechRecognitionPhrase/);
+  assert.match(source, /Identificação automática de quem está falando/);
+  assert.match(source, /Equipe, colega ou preceptoria/);
+  assert.match(source, /prioritizeQuickQuestions/);
   assert.match(source, /Especialidade desta consulta/);
 });
 
-test("ships private Firebase voice-profile synchronization", async () => {
-  const [source, firebaseSource, cloudSource, firestoreRules, storageRules, netlifyConfig] =
+test("ships private free-tier Firebase voice-profile synchronization", async () => {
+  const [source, firebaseSource, cloudSource, firestoreRules, firebaseConfig, netlifyConfig] =
     await Promise.all([
       readFile(new URL("app/voice-app.tsx", root), "utf8"),
       readFile(new URL("app/firebase.ts", root), "utf8"),
       readFile(new URL("app/cloud-voice-profile.ts", root), "utf8"),
       readFile(new URL("firestore.rules", root), "utf8"),
-      readFile(new URL("storage.rules", root), "utf8"),
+      readFile(new URL("firebase.json", root), "utf8"),
       readFile(new URL("netlify.toml", root), "utf8"),
     ]);
 
@@ -84,7 +83,11 @@ test("ships private Firebase voice-profile synchronization", async () => {
   assert.match(source, /syncTrainingSample/);
   assert.match(cloudSource, /uploadVoiceSample/);
   assert.match(cloudSource, /subscribeToVoiceSamples/);
+  assert.match(cloudSource, /Bytes\.fromUint8Array/);
+  assert.match(cloudSource, /MAX_SYNCED_AUDIO_BYTES/);
   assert.match(firestoreRules, /request\.auth\.uid == userId/);
-  assert.match(storageRules, /request\.resource\.contentType\.matches\('audio\/\.\*'\)/);
+  assert.match(firestoreRules, /audioBytes\.size\(\) < 700 \* 1024/);
+  assert.doesNotMatch(firebaseSource, /getStorage|firebase\/storage/);
+  assert.doesNotMatch(firebaseConfig, /"storage"/);
   assert.match(netlifyConfig, /from = "\/__\/auth\/\*"/);
 });

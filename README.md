@@ -8,17 +8,21 @@ pergunta e a reproduz com voz clara para o paciente.
 
 - reconhecimento de fala em português do Brasil;
 - reprodução da pergunta com síntese de voz;
-- perguntas rápidas de anamnese;
+- pelo menos 100 perguntas rápidas em cada especialidade;
+- prioridade dinâmica conforme as respostas ouvidas do paciente;
+- separação automática entre usuário, paciente e equipe/preceptoria;
+- reprodução automática somente da fala identificada como sendo do usuário;
+- proteção antieco para ignorar o áudio emitido pelo próprio app;
 - biblioteca de perguntas organizada por dezenas de especialidades;
 - contexto da especialidade aplicado ao reconhecimento de voz;
 - análise de até cinco alternativas de transcrição quando disponíveis;
 - contextualização nativa de termos em navegadores compatíveis;
-- reconhecimento em nuvem opcional com referência pessoal de voz;
-- vocabulário clínico e correções pessoais enviados ao modelo de transcrição;
-- retorno automático ao reconhecimento do navegador se a nuvem falhar;
+- comparação acústica local com as amostras pessoais de voz;
+- vocabulário clínico e correções pessoais aplicados no próprio navegador;
+- funcionamento sem API paga e sem chave secreta;
 - memória local das correções do usuário, mesmo sem login;
 - sincronização opcional entre dispositivos com login Google ou Apple;
-- áudios privados no Firebase Storage e metadados no Firestore;
+- áudios pequenos e privados sincronizados no Firestore gratuito;
 - gravação de áudio associada ao texto correto;
 - exportação da base de voz em ZIP;
 - interface responsiva e acessível.
@@ -57,27 +61,29 @@ O projeto usa Next.js e inclui o arquivo `netlify.toml`. No Netlify:
 O Netlify detecta o Next.js automaticamente. Não é necessário fixar uma versão
 do adaptador do Netlify.
 
-### Ativar o reconhecimento personalizado
+### Reconhecimento sem cobrança
 
-Em **Site configuration → Environment variables** no Netlify, configure:
+O app não usa OpenAI nem outra API paga. A primeira transcrição vem do recurso
+de voz do navegador. Em seguida, a Clara compara localmente ritmo, duração,
+energia e faixas de frequência com as frases treinadas. Para reduzir falsos
+positivos, a comparação acústica só substitui o resultado quando também existe
+apoio do texto reconhecido ou duas gravações da mesma frase.
 
-```text
-OPENAI_API_KEY=sua-chave-secreta
-OPENAI_TRANSCRIPTION_MODEL=gpt-transcribe
-ALLOWED_FIREBASE_EMAILS=email-da-sua-conta
-ALLOWED_FIREBASE_UIDS=
-```
+Grave cada pergunta importante pelo menos duas vezes. A comparação acústica
+funciona melhor para frases treinadas; fala livre ainda depende da qualidade do
+reconhecimento oferecido pelo navegador.
 
-`OPENAI_API_KEY` é secreta e nunca deve começar com `NEXT_PUBLIC_`. A lista de
-e-mails ou UIDs é obrigatória por segurança: sem ela, ninguém consegue consumir
-os créditos da API. É possível autorizar mais de uma conta separando os valores
-por vírgula.
+Com três ou mais amostras, a Clara cria também um perfil estatístico da voz do
+usuário. Cada turno do microfone é classificado automaticamente como **minha
+fala**, **paciente** ou **equipe/preceptoria**. Vozes diferentes da cadastrada
+são separadas pelo conteúdo: relatos em primeira pessoa alimentam o contexto do
+paciente; discussão de hipótese, exame e conduta vai para o contexto da equipe.
+A interface permite corrigir o rótulo quando necessário.
 
-Depois de configurar, faça um novo deploy no Netlify. Entre na sua conta no
-app, grave pelo menos uma frase com duração entre 2 e 10 segundos e ative
-**Reconhecimento personalizado na nuvem**. A função protegida em
-`netlify/functions/transcribe.ts` valida a sessão Firebase antes de chamar a
-API de transcrição.
+Quando o turno é identificado como fala do usuário, a frase é emitida
+automaticamente em voz clara. O reconhecimento fica suspenso durante a síntese,
+descarta ecos semelhantes e só reabre o microfone depois que o áudio termina.
+Falas do paciente e da equipe nunca são reproduzidas automaticamente.
 
 ## Ativar a sincronização Firebase
 
@@ -85,20 +91,25 @@ A configuração pública do app Firebase já está no código. Antes de usar a
 sincronização em produção, faça estas etapas no [Console do Firebase](https://console.firebase.google.com/):
 
 1. Em **Authentication → Sign-in method**, ative o provedor **Google**.
-2. Crie o banco **Cloud Firestore** e o **Cloud Storage** no projeto
-   `voz-ao-vivo`.
+2. Crie somente um banco **Cloud Firestore** no projeto `voz-ao-vivo`. Não é
+   necessário ativar Cloud Storage nem cadastrar cartão.
 3. Em **Authentication → Settings → Authorized domains**, adicione o domínio
    final do site no Netlify, sem `https://`.
 4. Instale a CLI e publique as regras privadas incluídas no repositório:
 
 ```bash
 npx firebase-tools login
-npx firebase-tools deploy --only firestore:rules,storage
+npx firebase-tools deploy --only firestore:rules,firestore:indexes
 ```
 
 As regras permitem que cada usuário autenticado acesse apenas
-`users/{seu-uid}/...`. Não publique o banco ou o Storage com regras abertas de
-modo de teste. Para produção, também é recomendável ativar o Firebase App Check.
+`users/{seu-uid}/...`, limitam cada áudio a 700 KiB e impedem a indexação dos
+bytes. Não publique o banco com regras abertas de modo de teste. Para produção,
+também é recomendável ativar o Firebase App Check.
+
+No plano Spark, o Firestore oferece uma cota gratuita e não exige forma de
+pagamento. Se a cota for ultrapassada, a sincronização para até o ciclo seguinte
+em vez de gerar cobrança. O app continua guardando as amostras localmente.
 
 O Analytics não é inicializado neste app, para evitar telemetria desnecessária
 em um fluxo com dados de voz potencialmente sensíveis.
@@ -134,9 +145,9 @@ configuração obrigatória:
 
 Se `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` apontar para um domínio próprio, esse
 domínio e `https://SEU-DOMINIO/__/auth/handler` também precisam ser verificados
-e liberados na Apple e no Firebase. Contas Apple podem ocultar o e-mail; nesse
-caso, autorize a transcrição com `ALLOWED_FIREBASE_UIDS`, usando o UID mostrado
-em **Firebase Authentication → Users**, em vez de depender do e-mail privado.
+e liberados na Apple e no Firebase. Contas Apple podem ocultar o e-mail, mas a
+sincronização continua funcionando porque os dados são isolados pelo UID da
+conta no Firebase.
 
 ## Como o reconhecimento melhora
 
@@ -144,14 +155,19 @@ A especialidade selecionada prioriza o vocabulário clínico correspondente. O
 app compara alternativas do reconhecimento, aplica as correções já ensinadas e
 mantém frases que não combinam com a biblioteca como fala livre.
 
-No modo personalizado, o app envia o áudio atual, uma referência curta da sua
-voz, as correções pessoais e o vocabulário da especialidade para a transcrição
-em nuvem. O resultado informa se conseguiu usar a referência de voz. Se a função
-não estiver configurada ou falhar, o texto reconhecido pelo navegador é mantido.
+Cada gravação gera uma assinatura acústica compacta. Durante a consulta, a
+assinatura da fala atual é comparada com as amostras no dispositivo. As
+correções textuais aprendidas também são reaplicadas automaticamente.
 
-Esse condicionamento é mais personalizado que o reconhecimento local, mas não é
-um modelo acústico permanentemente treinado. Portanto, ainda não é possível
-garantir 100% de acerto para toda fala.
+Cada especialidade possui entre 105 e 111 perguntas rápidas. O texto reconhecido
+como resposta do paciente ativa regras locais de prioridade: termos como dor,
+febre, falta de ar, sangramento, trauma e medicamentos fazem as perguntas de
+caracterização correspondentes subirem para o início da lista. Falas da equipe
+ficam separadas e não alteram essa ordem.
+
+Esse método gratuito é personalizado para frases treinadas, mas não é um modelo
+de fala completo permanentemente treinado. Portanto, não é possível garantir
+100% de acerto para toda fala.
 
 ## Privacidade clínica
 
@@ -159,7 +175,6 @@ Este protótipo é uma ferramenta de comunicação e não fornece diagnóstico o
 conduta médica. Evite incluir dados identificáveis do paciente nas frases de
 treinamento. Em uso clínico, valide os requisitos de privacidade, segurança e
 conformidade aplicáveis à sua instituição. Firebase e Netlify, isoladamente,
-não garantem conformidade regulatória para dados clínicos. O modo em nuvem é
-desativado por padrão e informa que o áudio será enviado à API da OpenAI; use-o
-somente sem dados identificáveis de pacientes e após avaliar as políticas da
-sua instituição.
+não garantem conformidade regulatória para dados clínicos. A comparação
+personalizada ocorre no aparelho; com login, as amostras são sincronizadas no
+Firestore privado da conta.

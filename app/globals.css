@@ -303,7 +303,6 @@ h1 em { color: var(--green-2); font-weight: 500; }
 .section-label { color: var(--green); font-size: 14px; font-weight: 800; }
 .section-hint { color: var(--muted); font-size: 12px; }
 .transcription-source { width: fit-content; margin-top: 4px; padding: 4px 7px; border-radius: 999px; background: #eeeee7; color: var(--muted); font-size: 10px; font-weight: 800; }
-.transcription-source.cloud { background: #edf2ce; color: var(--green); }
 .transcription-source.voice-profile { background: var(--mint); color: var(--green-2); }
 .icon-button { width: 38px; height: 38px; border: 1px solid var(--line); border-radius: 11px; background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
 .transcript-wrap { flex: 1; min-height: 190px; position: relative; margin-top: 16px; }
@@ -341,7 +340,25 @@ h1 em { color: var(--green-2); font-weight: 500; }
 .secondary-button:disabled { opacity: .55; cursor: wait; }
 .audio-learning-note { margin: 11px 0 0; color: var(--green-2); font-size: 11px; display: flex; align-items: center; gap: 6px; }
 
-.cloud-recognition-card {
+.speaker-detection-card {
+  margin-top: 18px;
+  padding: 15px 18px;
+  border: 1px solid #b7cec5;
+  border-radius: 16px;
+  background: rgba(223, 242, 232, .55);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+}
+.speaker-detection-card > div:first-child { min-width: 0; display: grid; gap: 4px; }
+.speaker-detection-card strong { font-size: 12px; }
+.speaker-detection-card span { color: var(--green-2); font-size: 12px; font-weight: 800; }
+.speaker-detection-card small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 10px; }
+.speaker-correction { flex: 0 0 auto; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.speaker-correction button { min-height: 34px; border: 1px solid #a3c8ba; border-radius: 10px; background: white; color: var(--green); padding: 0 10px; font-size: 10px; font-weight: 800; cursor: pointer; }
+
+.free-recognition-card {
   margin-top: 18px;
   padding: 17px 20px;
   border: 1px solid var(--line);
@@ -352,12 +369,13 @@ h1 em { color: var(--green-2); font-weight: 500; }
   align-items: center;
   gap: 14px;
 }
-.cloud-recognition-card.active { border-color: #95c4b2; background: #f8fff9; }
-.cloud-recognition-icon { width: 44px; height: 44px; border-radius: 13px; display: grid; place-items: center; background: var(--mint); color: var(--green); }
-.cloud-recognition-card > div:nth-child(2) { display: grid; gap: 4px; }
-.cloud-recognition-card strong { font-size: 13px; }
-.cloud-recognition-card span { color: var(--muted); font-size: 11px; line-height: 1.45; }
-.cloud-recognition-card small { color: #8b6257; font-size: 10px; line-height: 1.4; }
+.free-recognition-card { border-color: #95c4b2; background: #f8fff9; }
+.free-recognition-icon { width: 44px; height: 44px; border-radius: 13px; display: grid; place-items: center; background: var(--mint); color: var(--green); }
+.free-recognition-card > div:nth-child(2) { display: grid; gap: 4px; }
+.free-recognition-card strong { font-size: 13px; }
+.free-recognition-card span { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.free-recognition-card small { color: #587269; font-size: 10px; line-height: 1.4; }
+.free-recognition-card .free-badge { padding: 6px 9px; border-radius: 999px; background: var(--green); color: white; font-size: 11px; font-weight: 900; white-space: nowrap; }
 .toggle:disabled { opacity: .45; cursor: not-allowed; }
 
 .lower-grid { display: grid; grid-template-columns: 1.45fr .55fr; gap: 18px; margin: 18px 0 70px; }
@@ -365,9 +383,15 @@ h1 em { color: var(--green-2); font-weight: 500; }
 .small-card-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 .small-card-heading > span { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 14px; }
 .small-card-heading small { color: var(--muted); }
-.quick-list { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; }
+.patient-context-box { margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; background: #f0f5eb; display: grid; grid-template-columns: 1fr auto; gap: 5px 12px; }
+.patient-context-box strong { font-size: 11px; }
+.patient-context-box span { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.patient-context-box button { grid-column: 2; grid-row: 1 / 3; border: 0; background: transparent; color: var(--green-2); font-size: 10px; font-weight: 800; cursor: pointer; }
+.quick-list { max-height: 650px; overflow-y: auto; padding-right: 4px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; }
 .quick-list button { min-height: 58px; border: 1px solid var(--line); border-radius: 12px; background: #fafaf5; color: var(--ink); padding: 9px 12px; display: flex; justify-content: space-between; align-items: center; gap: 8px; text-align: left; cursor: pointer; font-size: 13px; font-weight: 700; }
 .quick-list button:hover { border-color: #a2bfb6; background: var(--mint); }
+.show-questions-button { width: 100%; min-height: 40px; margin-top: 12px; border: 1px solid #a3c8ba; border-radius: 11px; background: var(--mint); color: var(--green); font-size: 11px; font-weight: 800; cursor: pointer; }
+.team-context-note { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; line-height: 1.45; }
 .auto-card { padding: 22px; display: grid; grid-template-columns: auto 1fr auto; gap: 13px; align-items: center; }
 .auto-icon { width: 42px; height: 42px; border-radius: 12px; background: #edf2ce; display: grid; place-items: center; color: var(--green); }
 .auto-card > div:nth-child(2) { display: grid; gap: 4px; }
@@ -472,11 +496,15 @@ footer { width: min(1184px, calc(100% - 48px)); margin: 0 auto; min-height: 74px
   .mic-button { width: 126px; height: 126px; margin: 58px 0 29px; }
   .message-card { padding: 21px 19px; }
   .message-actions { flex-direction: column; }
-  .cloud-recognition-card { grid-template-columns: auto 1fr; align-items: start; }
-  .cloud-recognition-card > .toggle { grid-column: 2; justify-self: end; }
+  .free-recognition-card { grid-template-columns: auto 1fr; align-items: start; }
+  .free-recognition-card > .free-badge { grid-column: 2; justify-self: start; }
   .primary-button, .secondary-button { width: 100%; flex: none; }
   .lower-grid { margin-top: 12px; }
   .quick-list { grid-template-columns: 1fr; }
+  .speaker-detection-card { align-items: stretch; flex-direction: column; }
+  .speaker-correction { justify-content: flex-start; }
+  .patient-context-box { grid-template-columns: 1fr; }
+  .patient-context-box button { grid-column: 1; grid-row: auto; justify-self: start; padding: 0; }
   .training-view { padding: 42px 0; gap: 35px; }
   .training-card { padding: 21px 18px; }
   .training-card > textarea { font-size: 23px; }
