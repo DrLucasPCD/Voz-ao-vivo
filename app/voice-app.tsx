@@ -796,7 +796,9 @@ export function VoiceApp() {
         setAuthError(`O login com ${providerName} ainda precisa ser ativado no Firebase.`);
       } else if (code === "auth/popup-closed-by-user") {
         setAuthError(
-          `A janela de login foi fechada antes da conclusão. Se ela fechou sozinha, confirme que ${currentDomain} está nos domínios autorizados do Firebase.`,
+          currentDomain === "voz-ao-vivo.netlify.app"
+            ? "A janela do Google fechou sem concluir. Se apareceu Erro 400: redirect_uri_mismatch, adicione https://voz-ao-vivo.netlify.app/__/auth/handler em Google Cloud → Google Auth Platform → Clientes → URIs de redirecionamento autorizados."
+            : `A janela de login foi fechada antes da conclusão. Confirme que ${currentDomain} está nos domínios autorizados do Firebase.`,
         );
       } else if (code === "auth/network-request-failed") {
         setAuthError("A conexão com o Google falhou. Verifique a internet e tente novamente.");
