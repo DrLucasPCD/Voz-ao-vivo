@@ -9,7 +9,10 @@ pergunta e a reproduz com voz clara para o paciente.
 - reconhecimento de fala em português do Brasil;
 - reprodução da pergunta com síntese de voz;
 - perguntas rápidas de anamnese;
-- treinamento organizado por etapas da consulta médica;
+- biblioteca de perguntas organizada por dezenas de especialidades;
+- contexto da especialidade aplicado ao reconhecimento de voz;
+- análise de até cinco alternativas de transcrição quando disponíveis;
+- contextualização nativa de termos em navegadores compatíveis;
 - memória local das correções do usuário, mesmo sem login;
 - sincronização opcional entre dispositivos com login Google;
 - áudios privados no Firebase Storage e metadados no Firestore;
@@ -74,6 +77,32 @@ modo de teste. Para produção, também é recomendável ativar o Firebase App C
 
 O Analytics não é inicializado neste app, para evitar telemetria desnecessária
 em um fluxo com dados de voz potencialmente sensíveis.
+
+### Login no celular
+
+O login tenta primeiro o popup do Google e usa redirecionamento como alternativa
+quando o navegador bloqueia popups. O `netlify.toml` já consegue encaminhar
+`/__/auth/*` ao Firebase para um fluxo de redirecionamento no mesmo domínio.
+
+O popup funciona com o `authDomain` padrão do Firebase e não requer configuração
+adicional no Netlify. Se quiser ativar o redirecionamento no mesmo domínio, crie
+no Netlify a variável `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` com apenas o domínio do
+site. Adicione esse domínio aos domínios autorizados do Firebase e registre
+`https://SEU-DOMINIO/__/auth/handler` como URI autorizada no cliente OAuth do
+Google. Essa configuração adicional evita limitações de armazenamento de
+terceiros em alguns navegadores móveis.
+
+## Como o reconhecimento melhora
+
+A especialidade selecionada prioriza o vocabulário clínico correspondente. O
+app compara alternativas do reconhecimento, aplica as correções já ensinadas e
+mantém frases que não combinam com a biblioteca como fala livre.
+
+As amostras gravadas formam uma base pessoal sincronizada e podem ser exportadas
+para o futuro treinamento de um modelo acústico personalizado. Nesta versão, o
+Firebase armazena essa base, mas não treina automaticamente um modelo com a voz.
+Por isso, o app aumenta a precisão progressivamente, mas não pode garantir 100%
+de acerto para toda fala.
 
 ## Privacidade clínica
 

@@ -10,6 +10,13 @@
   targetPort = 3000
   port = 8888
 
+# Mantém o fluxo de autenticação Firebase no mesmo domínio em navegadores móveis.
+[[redirects]]
+  from = "/__/auth/*"
+  to = "https://voz-ao-vivo.firebaseapp.com/__/auth/:splat"
+  status = 200
+  force = true
+
 [[headers]]
   for = "/*"
   [headers.values]

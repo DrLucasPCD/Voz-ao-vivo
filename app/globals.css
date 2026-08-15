@@ -27,9 +27,9 @@ body {
   min-height: 100vh;
 }
 
-button, textarea { font: inherit; }
+button, textarea, select { font: inherit; }
 button { -webkit-tap-highlight-color: transparent; }
-button:focus-visible, textarea:focus-visible, a:focus-visible {
+button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visible {
   outline: 3px solid #8eb3ff;
   outline-offset: 3px;
 }
@@ -180,6 +180,32 @@ h1 em { color: var(--green-2); font-weight: 500; }
   line-height: 1.65;
 }
 
+.clinical-context {
+  margin: -20px 0 20px;
+  padding: 15px 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 254, 249, .78);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.clinical-context > div { display: grid; gap: 4px; }
+.clinical-context label, .specialty-field label { color: var(--ink); font-size: 13px; font-weight: 800; }
+.clinical-context span { color: var(--muted); font-size: 11px; }
+.clinical-context select, .specialty-field select {
+  min-height: 42px;
+  border: 1px solid #b8c8c1;
+  border-radius: 12px;
+  background: white;
+  color: var(--green);
+  padding: 0 38px 0 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
 .talk-grid {
   display: grid;
   grid-template-columns: 0.82fr 1.18fr;
@@ -320,6 +346,7 @@ h1 em { color: var(--green-2); font-weight: 500; }
 
 .training-view { min-height: calc(100vh - 160px); padding: 68px 6px; display: grid; grid-template-columns: .78fr 1.22fr; gap: 70px; align-items: center; }
 .training-intro > p:not(.eyebrow) { max-width: 470px; color: var(--muted); font-size: 16px; line-height: 1.65; margin: 26px 0; }
+.training-intro .phrase-catalog-count { margin-top: -12px; padding: 11px 13px; border-left: 3px solid var(--lime); background: rgba(237, 242, 206, .45); font-size: 12px; line-height: 1.45; }
 .training-progress { display: flex; align-items: center; gap: 14px; margin: 28px 0; }
 .training-progress strong { font-family: Georgia, serif; font-size: 48px; color: var(--green-2); line-height: 1; }
 .training-progress span { color: var(--muted); font-size: 13px; line-height: 1.4; }
@@ -333,6 +360,8 @@ h1 em { color: var(--green-2); font-weight: 500; }
 .privacy-box svg { flex: 0 0 auto; margin-top: 1px; }
 .training-card { padding: 29px; box-shadow: var(--shadow); }
 .training-card.recording { border-color: #da8a7f; }
+.specialty-field { display: grid; gap: 8px; margin-bottom: 22px; }
+.specialty-field select { width: 100%; }
 .step-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
 .step-heading > span { color: var(--green-2); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; font-weight: 800; }
 .step-heading button { border: 0; background: transparent; color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 2px; cursor: pointer; }
@@ -401,6 +430,8 @@ footer { width: min(1184px, calc(100% - 48px)); margin: 0 auto; min-height: 74px
   .hero { padding: 42px 2px 30px; }
   h1 { font-size: 45px; }
   .hero-copy { font-size: 15px; }
+  .clinical-context { margin-top: -12px; align-items: stretch; flex-direction: column; }
+  .clinical-context select { width: 100%; }
   .talk-grid { gap: 12px; }
   .listen-card { min-height: 360px; }
   .mic-button { width: 126px; height: 126px; margin: 58px 0 29px; }

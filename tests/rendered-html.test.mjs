@@ -19,37 +19,47 @@ test("is configured as a standard Next.js app for Netlify", async () => {
 });
 
 test("ships the clinical consultation voice workflow", async () => {
-  const source = await readFile(new URL("app/voice-app.tsx", root), "utf8");
+  const [source, phraseSource] = await Promise.all([
+    readFile(new URL("app/voice-app.tsx", root), "utf8"),
+    readFile(new URL("app/clinical-phrases.ts", root), "utf8"),
+  ]);
 
   assert.match(source, /Consulta médica assistida/);
-  assert.match(source, /Qual é o principal motivo da consulta/);
-  assert.match(source, /context: "Queixa principal"/);
-  assert.match(source, /context: "Medicamentos"/);
-  assert.match(source, /context: "Alergias"/);
-  assert.match(source, /context: "Encerramento"/);
+  assert.match(phraseSource, /Qual é o principal motivo da consulta/);
+  assert.match(phraseSource, /"Cardiologia"/);
+  assert.match(phraseSource, /"Pediatria"/);
+  assert.match(phraseSource, /"Psiquiatria"/);
+  assert.match(phraseSource, /"Ginecologia"/);
+  assert.match(phraseSource, /"Urgência e emergência"/);
   assert.match(source, /clara-corrections/);
   assert.match(source, /clara-voice-training/);
   assert.match(source, /speechSynthesis/);
   assert.match(source, /MediaRecorder/);
   assert.match(source, /perfil-de-voz-clara/);
+  assert.match(source, /maxAlternatives = 5/);
+  assert.match(source, /SpeechRecognitionPhrase/);
+  assert.match(source, /Especialidade desta consulta/);
 });
 
 test("ships private Firebase voice-profile synchronization", async () => {
-  const [source, firebaseSource, cloudSource, firestoreRules, storageRules] =
+  const [source, firebaseSource, cloudSource, firestoreRules, storageRules, netlifyConfig] =
     await Promise.all([
       readFile(new URL("app/voice-app.tsx", root), "utf8"),
       readFile(new URL("app/firebase.ts", root), "utf8"),
       readFile(new URL("app/cloud-voice-profile.ts", root), "utf8"),
       readFile(new URL("firestore.rules", root), "utf8"),
       readFile(new URL("storage.rules", root), "utf8"),
+      readFile(new URL("netlify.toml", root), "utf8"),
     ]);
 
   assert.match(firebaseSource, /GoogleAuthProvider/);
   assert.match(firebaseSource, /projectId: "voz-ao-vivo"/);
   assert.match(source, /Entrar para sincronizar/);
+  assert.match(source, /signInWithRedirect/);
   assert.match(source, /syncTrainingSample/);
   assert.match(cloudSource, /uploadVoiceSample/);
   assert.match(cloudSource, /subscribeToVoiceSamples/);
   assert.match(firestoreRules, /request\.auth\.uid == userId/);
   assert.match(storageRules, /request\.resource\.contentType\.matches\('audio\/\.\*'\)/);
+  assert.match(netlifyConfig, /from = "\/__\/auth\/\*"/);
 });

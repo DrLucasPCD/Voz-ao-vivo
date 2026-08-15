@@ -25,12 +25,19 @@ import {
 } from "lucide-react";
 import { strToU8, zipSync } from "fflate";
 import {
+  getRedirectResult,
   onAuthStateChanged,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
   type User,
 } from "firebase/auth";
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  CLINICAL_PHRASES,
+  CLINICAL_SPECIALTIES,
+  phrasesForSpecialty,
+} from "./clinical-phrases";
 import {
   deleteCloudVoiceSample,
   downloadVoiceSample,
@@ -42,21 +49,29 @@ import {
 } from "./cloud-voice-profile";
 import { firebaseAuth, googleAuthProvider } from "./firebase";
 
+type RecognitionAlternative = { transcript: string; confidence: number };
+
+type RecognitionResult = {
+  isFinal: boolean;
+  length: number;
+  [index: number]: RecognitionAlternative;
+};
+
 type RecognitionResultEvent = Event & {
   resultIndex: number;
-  results: ArrayLike<{
-    isFinal: boolean;
-    0: { transcript: string; confidence: number };
-  }>;
+  results: ArrayLike<RecognitionResult>;
 };
 
 type RecognitionErrorEvent = Event & { error: string };
+
+type BrowserRecognitionPhrase = { phrase: string; boost: number };
 
 type BrowserRecognition = EventTarget & {
   lang: string;
   continuous: boolean;
   interimResults: boolean;
   maxAlternatives: number;
+  phrases?: BrowserRecognitionPhrase[];
   start: () => void;
   stop: () => void;
   abort: () => void;
@@ -71,6 +86,10 @@ declare global {
   interface Window {
     SpeechRecognition?: BrowserRecognitionConstructor;
     webkitSpeechRecognition?: BrowserRecognitionConstructor;
+    SpeechRecognitionPhrase?: new (
+      phrase: string,
+      boost?: number,
+    ) => BrowserRecognitionPhrase;
   }
 }
 
@@ -93,52 +112,11 @@ type TrainingSample = {
   synced?: boolean;
 };
 
-const QUICK_PHRASES = [
-  "Qual é o principal motivo da consulta?",
-  "Quando os sintomas começaram?",
-  "Você usa algum medicamento continuamente?",
-  "Você tem alergia a algum medicamento?",
-];
-
-const TRAINING_PHRASES = [
-  { context: "Abertura", text: "Bom dia, eu sou o doutor Lucas e vou conduzir sua consulta." },
-  { context: "Abertura", text: "Como você prefere ser chamado?" },
-  { context: "Abertura", text: "Qual é o principal motivo da consulta de hoje?" },
-  { context: "Abertura", text: "Além disso, existe outra preocupação que você gostaria de conversar?" },
-  { context: "Queixa principal", text: "Conte com suas palavras o que está sentindo." },
-  { context: "Queixa principal", text: "Quando esse sintoma começou?" },
-  { context: "Queixa principal", text: "O início foi súbito ou aconteceu aos poucos?" },
-  { context: "Queixa principal", text: "Esse sintoma está melhorando, piorando ou permanece igual?" },
-  { context: "Caracterização", text: "Em qual parte do corpo você sente o problema?" },
-  { context: "Caracterização", text: "Como você descreveria essa sensação?" },
-  { context: "Caracterização", text: "De zero a dez, qual é a intensidade do sintoma?" },
-  { context: "Caracterização", text: "O sintoma é contínuo ou aparece em alguns momentos?" },
-  { context: "Caracterização", text: "Existe algo que melhora o sintoma?" },
-  { context: "Caracterização", text: "Existe algo que piora o sintoma?" },
-  { context: "Sintomas associados", text: "Você teve febre ou calafrios?" },
-  { context: "Sintomas associados", text: "Você sentiu falta de ar, tontura ou desmaio?" },
-  { context: "Sintomas associados", text: "Você teve náuseas, vômitos ou alteração do apetite?" },
-  { context: "Sintomas associados", text: "Percebeu alguma alteração no sono, no peso ou na disposição?" },
-  { context: "Antecedentes", text: "Você tem alguma doença ou condição de saúde diagnosticada?" },
-  { context: "Antecedentes", text: "Já precisou ser internado ou fazer alguma cirurgia?" },
-  { context: "Antecedentes", text: "Já teve esse mesmo problema antes?" },
-  { context: "Antecedentes", text: "Existe alguma doença importante na sua família?" },
-  { context: "Medicamentos", text: "Quais medicamentos você usa atualmente?" },
-  { context: "Medicamentos", text: "Você sabe a dose e o horário de cada medicamento?" },
-  { context: "Medicamentos", text: "Usou algum remédio por conta própria para esse sintoma?" },
-  { context: "Alergias", text: "Você tem alergia a algum medicamento, alimento ou substância?" },
-  { context: "Alergias", text: "O que acontece quando você entra em contato com essa substância?" },
-  { context: "Hábitos", text: "Você fuma ou já fumou?" },
-  { context: "Hábitos", text: "Você consome bebidas alcoólicas? Com que frequência?" },
-  { context: "Hábitos", text: "Como são sua alimentação e sua rotina de atividade física?" },
-  { context: "Segurança", text: "Neste momento, você sente dor muito forte ou dificuldade para respirar?" },
-  { context: "Segurança", text: "Houve perda de consciência, fraqueza súbita ou alteração da fala?" },
-  { context: "Compreensão", text: "Vou repetir o que entendi para confirmar se está correto." },
-  { context: "Compreensão", text: "Existe algum detalhe importante que eu ainda não perguntei?" },
-  { context: "Plano", text: "Agora vou realizar o exame físico e explicar os próximos passos." },
-  { context: "Plano", text: "Você entendeu as orientações ou gostaria que eu explicasse novamente?" },
-  { context: "Encerramento", text: "Você tem alguma dúvida antes de encerrarmos a consulta?" },
-  { context: "Encerramento", text: "Obrigado por compartilhar essas informações comigo." },
+const GENERAL_QUICK_PHRASES = [
+  "Qual é o principal motivo da consulta de hoje?",
+  "Quando esse sintoma começou?",
+  "Quais medicamentos você usa atualmente?",
+  "Você tem alergia a algum medicamento, alimento ou substância?",
 ];
 
 const normalize = (value: string) =>
@@ -174,6 +152,33 @@ function similarity(a: string, b: string) {
   const longest = Math.max(left.length, right.length);
   if (!longest) return 1;
   return 1 - levenshtein(left, right) / longest;
+}
+
+function bestRecognitionAlternative(
+  result: RecognitionResult,
+  contextualPhrases: string[],
+) {
+  const alternatives = Array.from(
+    { length: Math.min(result.length, 5) },
+    (_, index) => result[index],
+  ).filter(Boolean);
+  if (!alternatives.length) return "";
+
+  return alternatives.reduce((best, alternative) => {
+    const contextScore = contextualPhrases.reduce(
+      (highest, phrase) =>
+        Math.max(highest, similarity(alternative.transcript, phrase)),
+      0,
+    );
+    const bestContextScore = contextualPhrases.reduce(
+      (highest, phrase) =>
+        Math.max(highest, similarity(best.transcript, phrase)),
+      0,
+    );
+    const score = contextScore * 0.78 + alternative.confidence * 0.22;
+    const bestScore = bestContextScore * 0.78 + best.confidence * 0.22;
+    return score > bestScore ? alternative : best;
+  }).transcript;
 }
 
 function applyLearnedCorrection(
@@ -322,8 +327,9 @@ export function VoiceApp() {
   const [pendingCorrectionAudio, setPendingCorrectionAudio] = useState<Blob | null>(null);
   const [isPreparingCorrectionAudio, setIsPreparingCorrectionAudio] = useState(false);
 
+  const [selectedSpecialty, setSelectedSpecialty] = useState("Clínica geral");
   const [promptIndex, setPromptIndex] = useState(0);
-  const [trainingPhrase, setTrainingPhrase] = useState(TRAINING_PHRASES[0].text);
+  const [trainingPhrase, setTrainingPhrase] = useState(CLINICAL_PHRASES[0].text);
   const [isRecording, setIsRecording] = useState(false);
   const [trainingCount, setTrainingCount] = useState(0);
   const [trainingSamples, setTrainingSamples] = useState<TrainingSample[]>([]);
@@ -343,8 +349,15 @@ export function VoiceApp() {
   }, []);
 
   useEffect(() => {
+    void getRedirectResult(firebaseAuth).catch(() => {
+      setError("Não consegui concluir o login. Tente entrar novamente.");
+    });
+  }, []);
+
+  useEffect(() => {
     const savedCorrections = localStorage.getItem("clara-corrections");
     const savedAutoSpeak = localStorage.getItem("clara-auto-speak") === "true";
+    const savedSpecialty = localStorage.getItem("clara-specialty");
     window.setTimeout(() => {
       if (savedCorrections) {
         try {
@@ -355,6 +368,12 @@ export function VoiceApp() {
       }
       setAutoSpeak(savedAutoSpeak);
       autoSpeakRef.current = savedAutoSpeak;
+      if (savedSpecialty && CLINICAL_SPECIALTIES.includes(savedSpecialty)) {
+        const savedPhrases = phrasesForSpecialty(savedSpecialty);
+        setSelectedSpecialty(savedSpecialty);
+        setPromptIndex(0);
+        setTrainingPhrase(savedPhrases[0].text);
+      }
     }, 0);
     getTrainingSamples()
       .then((samples) => {
@@ -445,8 +464,17 @@ export function VoiceApp() {
     };
   }, [latestRecordingUrl]);
 
-  const trainedPhrases = Array.from(
-    new Set(trainingSamples.map((sample) => sample.phrase.trim()).filter(Boolean)),
+  const specialtyPhrases = phrasesForSpecialty(selectedSpecialty);
+  const quickPhrases =
+    selectedSpecialty === "Clínica geral"
+      ? GENERAL_QUICK_PHRASES
+      : specialtyPhrases.slice(0, 4).map((phrase) => phrase.text);
+  const recognitionVocabulary = Array.from(
+    new Set([
+      ...specialtyPhrases.map((phrase) => phrase.text),
+      ...trainingSamples.map((sample) => sample.phrase.trim()).filter(Boolean),
+      ...corrections.map((correction) => correction.intended.trim()),
+    ]),
   );
 
   const handleSignIn = async () => {
@@ -458,7 +486,12 @@ export function VoiceApp() {
         typeof signInError === "object" && signInError && "code" in signInError
           ? String(signInError.code)
           : "";
-      if (code !== "auth/popup-closed-by-user") {
+      if (
+        code === "auth/popup-blocked" ||
+        code === "auth/operation-not-supported-in-this-environment"
+      ) {
+        await signInWithRedirect(firebaseAuth, googleAuthProvider);
+      } else if (code !== "auth/popup-closed-by-user") {
         setError("Não consegui entrar com o Google. Tente novamente.");
       }
     }
@@ -582,7 +615,17 @@ export function VoiceApp() {
     recognition.lang = "pt-BR";
     recognition.continuous = false;
     recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
+    recognition.maxAlternatives = 5;
+    const RecognitionPhrase = window.SpeechRecognitionPhrase;
+    if (RecognitionPhrase && "phrases" in recognition) {
+      try {
+        recognition.phrases = recognitionVocabulary
+          .slice(0, 60)
+          .map((phrase) => new RecognitionPhrase(phrase, 5));
+      } catch {
+        // Contextual biasing is experimental; the alternatives below remain active.
+      }
+    }
     latestFinalRef.current = "";
 
     recognition.onresult = (event) => {
@@ -590,7 +633,12 @@ export function VoiceApp() {
       let interimText = "";
       for (let index = event.resultIndex; index < event.results.length; index += 1) {
         const result = event.results[index];
-        if (result.isFinal) finalText += result[0].transcript;
+        if (result.isFinal) {
+          finalText += bestRecognitionAlternative(
+            result,
+            recognitionVocabulary,
+          );
+        }
         else interimText += result[0].transcript;
       }
       setInterimTranscript(interimText);
@@ -598,7 +646,13 @@ export function VoiceApp() {
         const cleanText = finalText.trim();
         latestFinalRef.current = cleanText;
         setRawTranscript(cleanText);
-        setTranscript(applyLearnedCorrection(cleanText, corrections, trainedPhrases));
+        setTranscript(
+          applyLearnedCorrection(
+            cleanText,
+            corrections,
+            recognitionVocabulary,
+          ),
+        );
       }
     };
 
@@ -626,7 +680,7 @@ export function VoiceApp() {
         const corrected = applyLearnedCorrection(
           latestFinalRef.current,
           corrections,
-          trainedPhrases,
+          recognitionVocabulary,
         );
         window.setTimeout(() => speak(corrected), 180);
       }
@@ -715,10 +769,19 @@ export function VoiceApp() {
     speak(phrase);
   };
 
+  const selectSpecialty = (specialtyName: string) => {
+    const nextPhrases = phrasesForSpecialty(specialtyName);
+    setSelectedSpecialty(specialtyName);
+    setPromptIndex(0);
+    setTrainingPhrase(nextPhrases[0].text);
+    setTrainingMessage("Leia a frase no seu ritmo");
+    localStorage.setItem("clara-specialty", specialtyName);
+  };
+
   const nextTrainingPhrase = () => {
-    const next = (promptIndex + 1) % TRAINING_PHRASES.length;
+    const next = (promptIndex + 1) % specialtyPhrases.length;
     setPromptIndex(next);
-    setTrainingPhrase(TRAINING_PHRASES[next].text);
+    setTrainingPhrase(specialtyPhrases[next].text);
     setTrainingMessage("Leia a frase no seu ritmo");
   };
 
@@ -927,6 +990,23 @@ export function VoiceApp() {
               </p>
             </section>
 
+            <section className="clinical-context" aria-label="Contexto clínico do reconhecimento">
+              <div>
+                <label htmlFor="talk-specialty">Especialidade desta consulta</label>
+                <span>Ajuda o reconhecimento a priorizar perguntas e termos da área.</span>
+              </div>
+              <select
+                id="talk-specialty"
+                value={selectedSpecialty}
+                onChange={(event) => selectSpecialty(event.target.value)}
+                disabled={isListening}
+              >
+                {CLINICAL_SPECIALTIES.map((specialtyName) => (
+                  <option key={specialtyName} value={specialtyName}>{specialtyName}</option>
+                ))}
+              </select>
+            </section>
+
             <section className="talk-grid" aria-label="Área principal de conversa">
               <article className={`listen-card ${isListening ? "listening" : ""}`}>
                 <div className="status-line">
@@ -1009,7 +1089,7 @@ export function VoiceApp() {
                   <small>Um toque para perguntar</small>
                 </div>
                 <div className="quick-list">
-                  {QUICK_PHRASES.map((phrase) => (
+                  {quickPhrases.map((phrase) => (
                     <button key={phrase} onClick={() => playQuickPhrase(phrase)}>{phrase}<Play size={14} fill="currentColor" /></button>
                   ))}
                 </div>
@@ -1039,6 +1119,9 @@ export function VoiceApp() {
               <p>
                 Grave perguntas que você usa na anamnese. Cada exemplo associa sua voz ao texto correto e fortalece seu perfil de reconhecimento clínico.
               </p>
+              <p className="phrase-catalog-count">
+                {CLINICAL_PHRASES.length} perguntas em {CLINICAL_SPECIALTIES.length} áreas clínicas para praticar no estágio.
+              </p>
               <div className="training-progress">
                 <strong>{trainingCount}</strong>
                 <span>amostras {user ? "sincronizadas" : "salvas"}<br />{user ? "na sua conta" : "neste dispositivo"}</span>
@@ -1060,11 +1143,24 @@ export function VoiceApp() {
             </div>
 
             <article className={`training-card ${isRecording ? "recording" : ""}`}>
+              <div className="specialty-field">
+                <label htmlFor="training-specialty">Especialidade para treinar</label>
+                <select
+                  id="training-specialty"
+                  value={selectedSpecialty}
+                  onChange={(event) => selectSpecialty(event.target.value)}
+                  disabled={isRecording}
+                >
+                  {CLINICAL_SPECIALTIES.map((specialtyName) => (
+                    <option key={specialtyName} value={specialtyName}>{specialtyName}</option>
+                  ))}
+                </select>
+              </div>
               <div className="step-heading">
-                <span>Frase {promptIndex + 1} de {TRAINING_PHRASES.length}</span>
+                <span>Frase {promptIndex + 1} de {specialtyPhrases.length}</span>
                 <button onClick={nextTrainingPhrase} disabled={isRecording}>Pular frase <ChevronRight size={16} /></button>
               </div>
-              <div className="context-chip">Contexto: {TRAINING_PHRASES[promptIndex].context}</div>
+              <div className="context-chip">Contexto: {specialtyPhrases[promptIndex].context}</div>
               <label htmlFor="training-phrase">Leia esta pergunta — ou escreva uma que você usa na consulta</label>
               <textarea
                 id="training-phrase"
