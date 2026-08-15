@@ -30,6 +30,7 @@ import {
   signInWithPopup,
   signInWithRedirect,
   signOut,
+  type AuthProvider,
   type User,
 } from "firebase/auth";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -47,7 +48,12 @@ import {
   uploadVoiceSample,
   type CloudVoiceSample,
 } from "./cloud-voice-profile";
-import { firebaseAuth, googleAuthProvider } from "./firebase";
+import {
+  appleAuthProvider,
+  appleSignInEnabled,
+  firebaseAuth,
+  googleAuthProvider,
+} from "./firebase";
 
 type RecognitionAlternative = { transcript: string; confidence: number };
 
@@ -107,6 +113,7 @@ type TrainingSample = {
   createdAt: string;
   source?: "guided" | "correction";
   heard?: string;
+  durationMs?: number;
   cloudId?: string;
   storagePath?: string;
   synced?: boolean;
@@ -316,6 +323,10 @@ export function VoiceApp() {
   const [message, setMessage] = useState("Pronto para ouvir");
   const [error, setError] = useState("");
   const [autoSpeak, setAutoSpeak] = useState(false);
+  const [cloudRecognition, setCloudRecognition] = useState(false);
+  const [transcriptionSource, setTranscriptionSource] = useState<
+    "browser" | "cloud" | "voice-profile"
+  >("browser");
   const [corrections, setCorrections] = useState<Correction[]>([]);
   const [correctionSaved, setCorrectionSaved] = useState(false);
   const recognitionRef = useRef<BrowserRecognition | null>(null);
@@ -324,6 +335,8 @@ export function VoiceApp() {
   const conversationRecorderRef = useRef<MediaRecorder | null>(null);
   const conversationChunksRef = useRef<Blob[]>([]);
   const conversationStreamRef = useRef<MediaStream | null>(null);
+  const conversationStartedAtRef = useRef(0);
+  const pendingCorrectionDurationMsRef = useRef(0);
   const [pendingCorrectionAudio, setPendingCorrectionAudio] = useState<Blob | null>(null);
   const [isPreparingCorrectionAudio, setIsPreparingCorrectionAudio] = useState(false);
 
@@ -339,6 +352,7 @@ export function VoiceApp() {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
+  const trainingStartedAtRef = useRef(0);
 
   useEffect(() => {
     return onAuthStateChanged(firebaseAuth, (currentUser) => {
@@ -357,6 +371,8 @@ export function VoiceApp() {
   useEffect(() => {
     const savedCorrections = localStorage.getItem("clara-corrections");
     const savedAutoSpeak = localStorage.getItem("clara-auto-speak") === "true";
+    const savedCloudRecognition =
+      localStorage.getItem("clara-cloud-recognition") === "true";
     const savedSpecialty = localStorage.getItem("clara-specialty");
     window.setTimeout(() => {
       if (savedCorrections) {
@@ -368,6 +384,7 @@ export function VoiceApp() {
       }
       setAutoSpeak(savedAutoSpeak);
       autoSpeakRef.current = savedAutoSpeak;
+      setCloudRecognition(savedCloudRecognition);
       if (savedSpecialty && CLINICAL_SPECIALTIES.includes(savedSpecialty)) {
         const savedPhrases = phrasesForSpecialty(savedSpecialty);
         setSelectedSpecialty(savedSpecialty);
@@ -431,6 +448,7 @@ export function VoiceApp() {
             blob: sample.blob,
             mimeType: sample.mimeType,
             createdAt: sample.createdAt,
+            durationMs: sample.durationMs,
             source: sample.source ?? "guided",
           });
           const updated = { ...sample, ...cloudSample };
@@ -476,11 +494,30 @@ export function VoiceApp() {
       ...corrections.map((correction) => correction.intended.trim()),
     ]),
   );
+  const hasVoiceReference = trainingSamples.some(
+    (sample) =>
+      sample.durationMs !== undefined &&
+      sample.durationMs >= 2000 &&
+      sample.durationMs <= 10000 &&
+      Boolean(sample.blob || sample.storagePath),
+  );
 
-  const handleSignIn = async () => {
+  const handleSignIn = async (
+    provider: AuthProvider,
+    providerName: "Google" | "Apple",
+  ) => {
     setError("");
     try {
-      await signInWithPopup(firebaseAuth, googleAuthProvider);
+      const prefersRedirect =
+        window.matchMedia("(max-width: 767px)").matches ||
+        /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+
+      if (prefersRedirect) {
+        await signInWithRedirect(firebaseAuth, provider);
+        return;
+      }
+
+      await signInWithPopup(firebaseAuth, provider);
     } catch (signInError) {
       const code =
         typeof signInError === "object" && signInError && "code" in signInError
@@ -490,9 +527,13 @@ export function VoiceApp() {
         code === "auth/popup-blocked" ||
         code === "auth/operation-not-supported-in-this-environment"
       ) {
-        await signInWithRedirect(firebaseAuth, googleAuthProvider);
+        await signInWithRedirect(firebaseAuth, provider);
+      } else if (code === "auth/operation-not-allowed") {
+        setError(
+          `O login com ${providerName} ainda precisa ser ativado no Firebase.`,
+        );
       } else if (code !== "auth/popup-closed-by-user") {
-        setError("Não consegui entrar com o Google. Tente novamente.");
+        setError(`Não consegui entrar com ${providerName}. Tente novamente.`);
       }
     }
   };
@@ -519,6 +560,7 @@ export function VoiceApp() {
         blob: sample.blob,
         mimeType: sample.mimeType,
         createdAt: sample.createdAt,
+        durationMs: sample.durationMs,
         source: sample.source ?? "guided",
       });
       const updated = { ...sample, ...cloudSample };
@@ -537,6 +579,77 @@ export function VoiceApp() {
       setSyncStatus("error");
       return sample;
     }
+  };
+
+  const requestPersonalizedTranscription = async (audioBlob: Blob) => {
+    if (!user) throw new Error("Entre na sua conta para usar a nuvem.");
+
+    const referenceSample = trainingSamples.find(
+      (sample) =>
+        sample.durationMs !== undefined &&
+        sample.durationMs >= 2000 &&
+        sample.durationMs <= 10000 &&
+        Boolean(sample.blob || sample.storagePath),
+    );
+    let referenceBlob: Blob | null = null;
+    if (referenceSample?.blob) referenceBlob = referenceSample.blob;
+    else if (referenceSample?.storagePath) {
+      try {
+        referenceBlob = await downloadVoiceSample(referenceSample.storagePath);
+      } catch {
+        referenceBlob = null;
+      }
+    }
+
+    const token = await user.getIdToken();
+    const body = new FormData();
+    const audioExtension = audioBlob.type.includes("ogg") ? "ogg" : "webm";
+    body.append(
+      "audio",
+      new File([audioBlob], `fala.${audioExtension}`, {
+        type: audioBlob.type || "audio/webm",
+      }),
+    );
+    body.append("specialty", selectedSpecialty);
+    body.append(
+      "vocabulary",
+      JSON.stringify(recognitionVocabulary.slice(0, 60)),
+    );
+    body.append(
+      "corrections",
+      JSON.stringify(
+        corrections.slice(-50).map((correction) => correction.intended),
+      ),
+    );
+    if (referenceBlob) {
+      const extension = referenceBlob.type.includes("ogg") ? "ogg" : "webm";
+      body.append(
+        "voiceReference",
+        new File([referenceBlob], `referencia.${extension}`, {
+          type: referenceBlob.type || "audio/webm",
+        }),
+      );
+    }
+
+    const response = await fetch("/.netlify/functions/transcribe", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body,
+    });
+    const payload = (await response.json().catch(() => ({}))) as {
+      text?: string;
+      error?: string;
+      usedVoiceReference?: boolean;
+    };
+    if (!response.ok || !payload.text) {
+      throw new Error(
+        payload.error ?? "A transcrição em nuvem não está disponível.",
+      );
+    }
+    return {
+      text: payload.text,
+      usedVoiceReference: Boolean(payload.usedVoiceReference),
+    };
   };
 
   const speak = useCallback((text: string) => {
@@ -576,9 +689,11 @@ export function VoiceApp() {
     setError("");
     setCorrectionSaved(false);
     setPendingCorrectionAudio(null);
+    pendingCorrectionDurationMsRef.current = 0;
     setIsPreparingCorrectionAudio(false);
     const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
-    if (!Recognition) {
+    const cloudEnabledForTurn = cloudRecognition && Boolean(user);
+    if (!Recognition && !cloudEnabledForTurn) {
       setError("O reconhecimento de voz ainda não funciona neste navegador. Abra o app no Chrome ou Edge.");
       return;
     }
@@ -595,19 +710,81 @@ export function VoiceApp() {
       recorder.ondataavailable = (event) => {
         if (event.data.size) conversationChunksRef.current.push(event.data);
       };
-      recorder.onstop = () => {
+      recorder.onstop = async () => {
+        const durationMs = Math.max(
+          0,
+          new Date().getTime() - conversationStartedAtRef.current,
+        );
         if (conversationChunksRef.current.length) {
-          setPendingCorrectionAudio(
-            new Blob(conversationChunksRef.current, { type: recorder.mimeType }),
-          );
+          const recordedAudio = new Blob(conversationChunksRef.current, {
+            type: recorder.mimeType,
+          });
+          setPendingCorrectionAudio(recordedAudio);
+          pendingCorrectionDurationMsRef.current = durationMs;
+
+          if (cloudEnabledForTurn) {
+            setMessage("Aprimorando com seu perfil de voz…");
+            try {
+              const cloudResult =
+                await requestPersonalizedTranscription(recordedAudio);
+              const cloudText = cloudResult.text.trim();
+              const corrected = applyLearnedCorrection(
+                cloudText,
+                corrections,
+                recognitionVocabulary,
+              );
+              latestFinalRef.current = cloudText;
+              setRawTranscript(cloudText);
+              setTranscript(corrected);
+              setTranscriptionSource(
+                cloudResult.usedVoiceReference ? "voice-profile" : "cloud",
+              );
+              setError("");
+              setMessage(
+                cloudResult.usedVoiceReference
+                  ? "Reconhecida com sua referência de voz"
+                  : "Reconhecida pela nuvem clínica",
+              );
+              if (autoSpeakRef.current) speak(corrected);
+            } catch (cloudError) {
+              const cloudMessage =
+                cloudError instanceof Error
+                  ? cloudError.message
+                  : "A nuvem não está disponível.";
+              setTranscriptionSource("browser");
+              setError(`${cloudMessage} Mantive o resultado do navegador.`);
+              setMessage(
+                latestFinalRef.current
+                  ? "Frase reconhecida pelo navegador"
+                  : "Não consegui entender esta fala",
+              );
+              if (autoSpeakRef.current && latestFinalRef.current) {
+                speak(
+                  applyLearnedCorrection(
+                    latestFinalRef.current,
+                    corrections,
+                    recognitionVocabulary,
+                  ),
+                );
+              }
+            }
+          }
         }
         stream.getTracks().forEach((track) => track.stop());
         conversationStreamRef.current = null;
         setIsPreparingCorrectionAudio(false);
       };
+      conversationStartedAtRef.current = new Date().getTime();
       recorder.start();
     } catch {
       setError("Não consegui acessar o microfone. Verifique a permissão do navegador.");
+      return;
+    }
+
+    if (!Recognition) {
+      recognitionRef.current = null;
+      setIsListening(true);
+      setMessage("Estou ouvindo você pela nuvem…");
       return;
     }
 
@@ -645,6 +822,7 @@ export function VoiceApp() {
       if (finalText.trim()) {
         const cleanText = finalText.trim();
         latestFinalRef.current = cleanText;
+        setTranscriptionSource("browser");
         setRawTranscript(cleanText);
         setTranscript(
           applyLearnedCorrection(
@@ -663,20 +841,31 @@ export function VoiceApp() {
         "no-speech": "Não ouvi uma frase. Vamos tentar novamente?",
         network: "A conexão falhou durante o reconhecimento. Tente novamente.",
       };
-      setError(messages[event.error] ?? "Não consegui entender desta vez. Tente novamente.");
+      if (cloudEnabledForTurn) {
+        setError("");
+        setMessage("O navegador não entendeu; tentando seu perfil na nuvem…");
+      } else {
+        setError(messages[event.error] ?? "Não consegui entender desta vez. Tente novamente.");
+        setMessage("Pronto para tentar novamente");
+      }
       setIsListening(false);
-      setMessage("Pronto para tentar novamente");
     };
 
     recognition.onend = () => {
       setIsListening(false);
       setInterimTranscript("");
-      setMessage(latestFinalRef.current ? "Frase reconhecida" : "Pronto para ouvir");
+      setMessage(
+        cloudEnabledForTurn
+          ? "Preparando transcrição personalizada…"
+          : latestFinalRef.current
+            ? "Frase reconhecida"
+            : "Pronto para ouvir",
+      );
       if (conversationRecorderRef.current?.state === "recording") {
         setIsPreparingCorrectionAudio(true);
         conversationRecorderRef.current.stop();
       }
-      if (autoSpeakRef.current && latestFinalRef.current) {
+      if (!cloudEnabledForTurn && autoSpeakRef.current && latestFinalRef.current) {
         const corrected = applyLearnedCorrection(
           latestFinalRef.current,
           corrections,
@@ -702,6 +891,13 @@ export function VoiceApp() {
 
   const stopListening = () => {
     recognitionRef.current?.stop();
+    if (
+      !recognitionRef.current &&
+      conversationRecorderRef.current?.state === "recording"
+    ) {
+      setIsPreparingCorrectionAudio(true);
+      conversationRecorderRef.current.stop();
+    }
     setIsListening(false);
   };
 
@@ -732,6 +928,7 @@ export function VoiceApp() {
         blob: pendingCorrectionAudio,
         mimeType: pendingCorrectionAudio.type,
         createdAt,
+        durationMs: pendingCorrectionDurationMsRef.current,
         source: "correction",
       });
       setTrainingSamples((samples) => [saved, ...samples]);
@@ -754,6 +951,7 @@ export function VoiceApp() {
     setCorrectionSaved(false);
     setError("");
     setMessage("Pronto para ouvir");
+    setTranscriptionSource("browser");
   };
 
   const toggleAutoSpeak = () => {
@@ -761,6 +959,22 @@ export function VoiceApp() {
     setAutoSpeak(next);
     autoSpeakRef.current = next;
     localStorage.setItem("clara-auto-speak", String(next));
+  };
+
+  const toggleCloudRecognition = () => {
+    if (!user) {
+      setError("Entre na sua conta antes de ativar o reconhecimento personalizado.");
+      return;
+    }
+    const next = !cloudRecognition;
+    setCloudRecognition(next);
+    localStorage.setItem("clara-cloud-recognition", String(next));
+    setError("");
+    setMessage(
+      next
+        ? "Reconhecimento personalizado ativado"
+        : "Reconhecimento do navegador ativado",
+    );
   };
 
   const playQuickPhrase = (phrase: string) => {
@@ -800,11 +1014,16 @@ export function VoiceApp() {
       };
       recorder.onstop = async () => {
         const blob = new Blob(recordingChunksRef.current, { type: recorder.mimeType });
+        const durationMs = Math.max(
+          0,
+          new Date().getTime() - trainingStartedAtRef.current,
+        );
         const saved = await storeTrainingSample({
           phrase: trainingPhrase.trim(),
           blob,
           mimeType: recorder.mimeType,
           createdAt: new Date().toISOString(),
+          durationMs,
           source: "guided",
         });
         if (latestRecordingUrl) URL.revokeObjectURL(latestRecordingUrl);
@@ -820,6 +1039,7 @@ export function VoiceApp() {
         stream.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
       };
+      trainingStartedAtRef.current = new Date().getTime();
       recorder.start();
       setIsRecording(true);
       setTrainingMessage("Gravando sua voz…");
@@ -965,14 +1185,29 @@ export function VoiceApp() {
                       : "Perfil sincronizado"}
                 </span>
               </div>
-              <button className="account-button subtle" onClick={handleSignOut} aria-label="Sair da conta Google">
+              <button className="account-button subtle" onClick={handleSignOut} aria-label="Sair da conta">
                 <LogOut size={16} /> Sair
               </button>
             </>
           ) : (
-            <button className="account-button" onClick={handleSignIn} disabled={!authReady}>
-              <LogIn size={16} /> {authReady ? "Entrar para sincronizar" : "Carregando…"}
-            </button>
+            <div className="signin-buttons" aria-label="Opções de login">
+              <button
+                className="account-button"
+                onClick={() => handleSignIn(googleAuthProvider, "Google")}
+                disabled={!authReady}
+              >
+                <LogIn size={16} /> {authReady ? "Entrar com Google" : "Carregando…"}
+              </button>
+              {appleSignInEnabled ? (
+                <button
+                  className="account-button apple"
+                  onClick={() => handleSignIn(appleAuthProvider, "Apple")}
+                  disabled={!authReady}
+                >
+                  <LogIn size={16} /> Entrar com Apple
+                </button>
+              ) : null}
+            </div>
           )}
         </div>
       </header>
@@ -1037,6 +1272,15 @@ export function VoiceApp() {
                   <div>
                     <span className="section-label">Sua pergunta ao paciente</span>
                     <span className="section-hint">Corrija o texto antes de reproduzir durante a consulta</span>
+                    {transcript && (
+                      <span className={`transcription-source ${transcriptionSource}`}>
+                        {transcriptionSource === "voice-profile"
+                          ? "Perfil de voz personalizado"
+                          : transcriptionSource === "cloud"
+                            ? "Nuvem clínica"
+                            : "Reconhecimento do navegador"}
+                      </span>
+                    )}
                   </div>
                   {(transcript || interimTranscript) && (
                     <button className="icon-button" onClick={clearPhrase} aria-label="Limpar frase"><Trash2 size={18} /></button>
@@ -1081,6 +1325,32 @@ export function VoiceApp() {
                 )}
               </article>
             </section>
+
+            <article className={`cloud-recognition-card ${cloudRecognition && user ? "active" : ""}`}>
+              <div className="cloud-recognition-icon"><Cloud size={22} /></div>
+              <div>
+                <strong>Reconhecimento personalizado na nuvem</strong>
+                <span>
+                  {user
+                    ? "Usa uma amostra curta da sua voz, suas correções e os termos da especialidade para melhorar a transcrição."
+                    : "Entre na sua conta para usar seu perfil de voz sincronizado."}
+                </span>
+                <small>
+                  {hasVoiceReference
+                    ? "Sua referência curta de voz está pronta. "
+                    : "Grave uma frase de 2 a 10 segundos para criar a referência de voz. "}
+                  Quando ativado, sua fala é enviada à API da OpenAI. Evite falar dados identificáveis do paciente.
+                </small>
+              </div>
+              <button
+                className={`toggle ${cloudRecognition && user ? "on" : ""}`}
+                onClick={toggleCloudRecognition}
+                role="switch"
+                aria-checked={Boolean(cloudRecognition && user)}
+                aria-label="Ativar reconhecimento personalizado na nuvem"
+                disabled={!user || isListening}
+              ><span /></button>
+            </article>
 
             <section className="lower-grid">
               <article className="quick-card">
@@ -1137,7 +1407,7 @@ export function VoiceApp() {
                   <strong>{user ? "Sincronização privada." : "Local por padrão."}</strong>{" "}
                   {user
                     ? "Suas amostras ficam protegidas pelo seu login e disponíveis nos seus dispositivos."
-                    : "Entre com Google para acessar suas amostras em outros dispositivos."}
+                    : "Entre na sua conta para acessar suas amostras em outros dispositivos."}
                 </span>
               </div>
             </div>

@@ -29,6 +29,7 @@ export type CloudVoiceSample = {
   createdAt: string;
   source: "guided" | "correction";
   heard?: string;
+  durationMs?: number;
   storagePath: string;
   synced: true;
 };
@@ -57,6 +58,7 @@ export async function uploadVoiceSample(uid: string, sample: UploadableSample) {
     storagePath,
     synced: true,
     ...(sample.heard ? { heard: sample.heard } : {}),
+    ...(sample.durationMs ? { durationMs: sample.durationMs } : {}),
   };
 
   await setDoc(

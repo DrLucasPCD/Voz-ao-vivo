@@ -1,5 +1,5 @@
 import { getApps, initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, OAuthProvider } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
@@ -21,3 +21,10 @@ export const firebaseStorage = getStorage(firebaseApp);
 
 export const googleAuthProvider = new GoogleAuthProvider();
 googleAuthProvider.setCustomParameters({ prompt: "select_account" });
+
+export const appleAuthProvider = new OAuthProvider("apple.com");
+appleAuthProvider.addScope("email");
+appleAuthProvider.addScope("name");
+
+export const appleSignInEnabled =
+  process.env.NEXT_PUBLIC_ENABLE_APPLE_SIGN_IN === "true";

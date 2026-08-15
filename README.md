@@ -13,16 +13,19 @@ pergunta e a reproduz com voz clara para o paciente.
 - contexto da especialidade aplicado ao reconhecimento de voz;
 - análise de até cinco alternativas de transcrição quando disponíveis;
 - contextualização nativa de termos em navegadores compatíveis;
+- reconhecimento em nuvem opcional com referência pessoal de voz;
+- vocabulário clínico e correções pessoais enviados ao modelo de transcrição;
+- retorno automático ao reconhecimento do navegador se a nuvem falhar;
 - memória local das correções do usuário, mesmo sem login;
-- sincronização opcional entre dispositivos com login Google;
+- sincronização opcional entre dispositivos com login Google ou Apple;
 - áudios privados no Firebase Storage e metadados no Firestore;
 - gravação de áudio associada ao texto correto;
 - exportação da base de voz em ZIP;
 - interface responsiva e acessível.
 
 Sem login, as correções e gravações ficam somente no navegador. Ao entrar com
-Google, o perfil é sincronizado no projeto Firebase `voz-ao-vivo`, em caminhos
-isolados pelo identificador da conta.
+Google ou Apple, o perfil é sincronizado no projeto Firebase `voz-ao-vivo`, em
+caminhos isolados pelo identificador da conta.
 
 ## Executar localmente
 
@@ -54,6 +57,28 @@ O projeto usa Next.js e inclui o arquivo `netlify.toml`. No Netlify:
 O Netlify detecta o Next.js automaticamente. Não é necessário fixar uma versão
 do adaptador do Netlify.
 
+### Ativar o reconhecimento personalizado
+
+Em **Site configuration → Environment variables** no Netlify, configure:
+
+```text
+OPENAI_API_KEY=sua-chave-secreta
+OPENAI_TRANSCRIPTION_MODEL=gpt-transcribe
+ALLOWED_FIREBASE_EMAILS=email-da-sua-conta
+ALLOWED_FIREBASE_UIDS=
+```
+
+`OPENAI_API_KEY` é secreta e nunca deve começar com `NEXT_PUBLIC_`. A lista de
+e-mails ou UIDs é obrigatória por segurança: sem ela, ninguém consegue consumir
+os créditos da API. É possível autorizar mais de uma conta separando os valores
+por vírgula.
+
+Depois de configurar, faça um novo deploy no Netlify. Entre na sua conta no
+app, grave pelo menos uma frase com duração entre 2 e 10 segundos e ative
+**Reconhecimento personalizado na nuvem**. A função protegida em
+`netlify/functions/transcribe.ts` valida a sessão Firebase antes de chamar a
+API de transcrição.
+
 ## Ativar a sincronização Firebase
 
 A configuração pública do app Firebase já está no código. Antes de usar a
@@ -78,11 +103,12 @@ modo de teste. Para produção, também é recomendável ativar o Firebase App C
 O Analytics não é inicializado neste app, para evitar telemetria desnecessária
 em um fluxo com dados de voz potencialmente sensíveis.
 
-### Login no celular
+### Login no celular com Google
 
-O login tenta primeiro o popup do Google e usa redirecionamento como alternativa
-quando o navegador bloqueia popups. O `netlify.toml` já consegue encaminhar
-`/__/auth/*` ao Firebase para um fluxo de redirecionamento no mesmo domínio.
+No celular, o app usa diretamente o redirecionamento recomendado pelo Firebase.
+Em computadores, tenta primeiro o popup e usa redirecionamento se o navegador o
+bloquear. O `netlify.toml` já encaminha `/__/auth/*` ao Firebase para permitir o
+fluxo no mesmo domínio.
 
 O popup funciona com o `authDomain` padrão do Firebase e não requer configuração
 adicional no Netlify. Se quiser ativar o redirecionamento no mesmo domínio, crie
@@ -92,17 +118,40 @@ site. Adicione esse domínio aos domínios autorizados do Firebase e registre
 Google. Essa configuração adicional evita limitações de armazenamento de
 terceiros em alguns navegadores móveis.
 
+### Ativar login com Apple
+
+O código do provedor Apple já está incluído, mas o botão só aparece depois da
+configuração obrigatória:
+
+1. Tenha uma assinatura ativa do **Apple Developer Program**.
+2. No portal Apple Developer, crie um **Service ID**, associe o site e registre
+   `https://voz-ao-vivo.firebaseapp.com/__/auth/handler` como Return URL. Crie
+   também a chave privada do Sign in with Apple e anote o Team ID e o Key ID.
+3. No Firebase, em **Authentication → Sign-in method → Apple**, informe o
+   Service ID, Team ID, Key ID e a chave privada e ative o provedor.
+4. No Netlify, defina `NEXT_PUBLIC_ENABLE_APPLE_SIGN_IN=true` e faça um novo
+   deploy.
+
+Se `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` apontar para um domínio próprio, esse
+domínio e `https://SEU-DOMINIO/__/auth/handler` também precisam ser verificados
+e liberados na Apple e no Firebase. Contas Apple podem ocultar o e-mail; nesse
+caso, autorize a transcrição com `ALLOWED_FIREBASE_UIDS`, usando o UID mostrado
+em **Firebase Authentication → Users**, em vez de depender do e-mail privado.
+
 ## Como o reconhecimento melhora
 
 A especialidade selecionada prioriza o vocabulário clínico correspondente. O
 app compara alternativas do reconhecimento, aplica as correções já ensinadas e
 mantém frases que não combinam com a biblioteca como fala livre.
 
-As amostras gravadas formam uma base pessoal sincronizada e podem ser exportadas
-para o futuro treinamento de um modelo acústico personalizado. Nesta versão, o
-Firebase armazena essa base, mas não treina automaticamente um modelo com a voz.
-Por isso, o app aumenta a precisão progressivamente, mas não pode garantir 100%
-de acerto para toda fala.
+No modo personalizado, o app envia o áudio atual, uma referência curta da sua
+voz, as correções pessoais e o vocabulário da especialidade para a transcrição
+em nuvem. O resultado informa se conseguiu usar a referência de voz. Se a função
+não estiver configurada ou falhar, o texto reconhecido pelo navegador é mantido.
+
+Esse condicionamento é mais personalizado que o reconhecimento local, mas não é
+um modelo acústico permanentemente treinado. Portanto, ainda não é possível
+garantir 100% de acerto para toda fala.
 
 ## Privacidade clínica
 
@@ -110,4 +159,7 @@ Este protótipo é uma ferramenta de comunicação e não fornece diagnóstico o
 conduta médica. Evite incluir dados identificáveis do paciente nas frases de
 treinamento. Em uso clínico, valide os requisitos de privacidade, segurança e
 conformidade aplicáveis à sua instituição. Firebase e Netlify, isoladamente,
-não garantem conformidade regulatória para dados clínicos.
+não garantem conformidade regulatória para dados clínicos. O modo em nuvem é
+desativado por padrão e informa que o áudio será enviado à API da OpenAI; use-o
+somente sem dados identificáveis de pacientes e após avaliar as políticas da
+sua instituição.

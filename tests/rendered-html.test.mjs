@@ -10,12 +10,33 @@ test("is configured as a standard Next.js app for Netlify", async () => {
     readFile(new URL("netlify.toml", root), "utf8"),
   ]);
 
-  assert.match(packageJson, /"next": "\^16\.2\.6"/);
+  assert.match(packageJson, /"next": "\^16\.3\.1"/);
   assert.match(packageJson, /"build": "next build"/);
   assert.doesNotMatch(packageJson, /vinext|wrangler|cloudflare/);
   assert.match(netlifyConfig, /command = "npm run build"/);
   assert.match(netlifyConfig, /publish = "\.next"/);
   assert.match(netlifyConfig, /Permissions-Policy = "microphone=\(self\)"/);
+});
+
+test("ships authenticated personalized cloud transcription", async () => {
+  const [source, functionSource, netlifyConfig, exampleEnv] = await Promise.all([
+    readFile(new URL("app/voice-app.tsx", root), "utf8"),
+    readFile(new URL("netlify/functions/transcribe.ts", root), "utf8"),
+    readFile(new URL("netlify.toml", root), "utf8"),
+    readFile(new URL(".env.example", root), "utf8"),
+  ]);
+
+  assert.match(source, /Reconhecimento personalizado na nuvem/);
+  assert.match(source, /requestPersonalizedTranscription/);
+  assert.match(source, /voiceReference/);
+  assert.match(functionSource, /accounts:lookup/);
+  assert.match(functionSource, /ALLOWED_FIREBASE_EMAILS/);
+  assert.match(functionSource, /gpt-transcribe/);
+  assert.match(functionSource, /known_speaker_references\[\]/);
+  assert.match(functionSource, /keywords\[\]/);
+  assert.match(netlifyConfig, /directory = "netlify\/functions"/);
+  assert.match(exampleEnv, /OPENAI_API_KEY=/);
+  assert.doesNotMatch(exampleEnv, /sk-[A-Za-z0-9]/);
 });
 
 test("ships the clinical consultation voice workflow", async () => {
@@ -53,9 +74,13 @@ test("ships private Firebase voice-profile synchronization", async () => {
     ]);
 
   assert.match(firebaseSource, /GoogleAuthProvider/);
+  assert.match(firebaseSource, /OAuthProvider\("apple\.com"\)/);
+  assert.match(firebaseSource, /NEXT_PUBLIC_ENABLE_APPLE_SIGN_IN/);
   assert.match(firebaseSource, /projectId: "voz-ao-vivo"/);
-  assert.match(source, /Entrar para sincronizar/);
+  assert.match(source, /Entrar com Google/);
+  assert.match(source, /Entrar com Apple/);
   assert.match(source, /signInWithRedirect/);
+  assert.match(source, /max-width: 767px/);
   assert.match(source, /syncTrainingSample/);
   assert.match(cloudSource, /uploadVoiceSample/);
   assert.match(cloudSource, /subscribeToVoiceSamples/);

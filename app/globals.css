@@ -106,6 +106,12 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visi
   gap: 8px;
 }
 
+.signin-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .account-button, .sync-badge {
   min-height: 36px;
   border-radius: 999px;
@@ -124,6 +130,12 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visi
   background: var(--mint);
   color: var(--green);
   cursor: pointer;
+}
+
+.account-button.apple {
+  border-color: #202724;
+  background: #202724;
+  color: white;
 }
 
 .account-button.subtle { background: transparent; border-color: var(--line); }
@@ -290,6 +302,9 @@ h1 em { color: var(--green-2); font-weight: 500; }
 .message-header > div { display: grid; gap: 4px; }
 .section-label { color: var(--green); font-size: 14px; font-weight: 800; }
 .section-hint { color: var(--muted); font-size: 12px; }
+.transcription-source { width: fit-content; margin-top: 4px; padding: 4px 7px; border-radius: 999px; background: #eeeee7; color: var(--muted); font-size: 10px; font-weight: 800; }
+.transcription-source.cloud { background: #edf2ce; color: var(--green); }
+.transcription-source.voice-profile { background: var(--mint); color: var(--green-2); }
 .icon-button { width: 38px; height: 38px; border: 1px solid var(--line); border-radius: 11px; background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
 .transcript-wrap { flex: 1; min-height: 190px; position: relative; margin-top: 16px; }
 .transcript-wrap textarea {
@@ -325,6 +340,25 @@ h1 em { color: var(--green-2); font-weight: 500; }
 .secondary-button { border: 1px solid #a3c8ba; background: var(--mint); color: var(--green); }
 .secondary-button:disabled { opacity: .55; cursor: wait; }
 .audio-learning-note { margin: 11px 0 0; color: var(--green-2); font-size: 11px; display: flex; align-items: center; gap: 6px; }
+
+.cloud-recognition-card {
+  margin-top: 18px;
+  padding: 17px 20px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--card);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 14px;
+}
+.cloud-recognition-card.active { border-color: #95c4b2; background: #f8fff9; }
+.cloud-recognition-icon { width: 44px; height: 44px; border-radius: 13px; display: grid; place-items: center; background: var(--mint); color: var(--green); }
+.cloud-recognition-card > div:nth-child(2) { display: grid; gap: 4px; }
+.cloud-recognition-card strong { font-size: 13px; }
+.cloud-recognition-card span { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.cloud-recognition-card small { color: #8b6257; font-size: 10px; line-height: 1.4; }
+.toggle:disabled { opacity: .45; cursor: not-allowed; }
 
 .lower-grid { display: grid; grid-template-columns: 1.45fr .55fr; gap: 18px; margin: 18px 0 70px; }
 .quick-card { padding: 21px 24px; }
@@ -424,7 +458,8 @@ footer { width: min(1184px, calc(100% - 48px)); margin: 0 auto; min-height: 74px
   .mode-switch { width: 100%; }
   .mode-switch button { flex: 1; justify-content: center; padding: 10px 9px; font-size: 12px; }
   .account-area { width: 100%; }
-  .account-button:not(.subtle) { width: 100%; }
+  .signin-buttons { width: 100%; display: grid; grid-template-columns: 1fr; }
+  .signin-buttons .account-button { width: 100%; }
   .sync-badge { flex: 1; }
   main, footer { width: min(100% - 28px, 1184px); }
   .hero { padding: 42px 2px 30px; }
@@ -437,6 +472,8 @@ footer { width: min(1184px, calc(100% - 48px)); margin: 0 auto; min-height: 74px
   .mic-button { width: 126px; height: 126px; margin: 58px 0 29px; }
   .message-card { padding: 21px 19px; }
   .message-actions { flex-direction: column; }
+  .cloud-recognition-card { grid-template-columns: auto 1fr; align-items: start; }
+  .cloud-recognition-card > .toggle { grid-column: 2; justify-self: end; }
   .primary-button, .secondary-button { width: 100%; flex: none; }
   .lower-grid { margin-top: 12px; }
   .quick-list { grid-template-columns: 1fr; }
