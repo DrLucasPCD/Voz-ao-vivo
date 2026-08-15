@@ -516,7 +516,7 @@ h1 em { color: var(--green-2); font-weight: 500; }
 main.talk-main {
   width: min(1480px, calc(100% - 32px));
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(380px, .92fr);
+  grid-template-columns: minmax(0, 1.75fr) minmax(430px, 1fr);
   grid-template-rows: auto auto minmax(440px, calc(100dvh - 325px)) auto auto auto auto;
   grid-template-areas:
     "hero hero"

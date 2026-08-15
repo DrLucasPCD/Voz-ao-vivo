@@ -137,6 +137,12 @@ declare global {
     webkitSpeechRecognition?: BrowserRecognitionConstructor;
     webkitAudioContext?: typeof AudioContext;
   }
+
+  interface Navigator {
+    audioSession?: {
+      type: "auto" | "playback" | "transient" | "transient-solo" | "ambient" | "play-and-record";
+    };
+  }
 }
 
 type Correction = {
@@ -436,20 +442,19 @@ export function VoiceApp() {
   const latestFinalRef = useRef("");
   const latestContextualFinalRef = useRef("");
   const autoSpeakRef = useRef(true);
+  const listeningRequestedRef = useRef(false);
   const isAppSpeakingRef = useRef(false);
   const lastSynthesizedTextRef = useRef("");
   const synthesisEndedAtRef = useRef(0);
-  const startListeningRef = useRef<(() => void) | null>(null);
   const outputAudioContextRef = useRef<AudioContext | null>(null);
   const activePiperAudioRef = useRef<HTMLAudioElement | null>(null);
   const activePiperAudioUrlRef = useRef("");
   const activeNativeUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const speechRequestRef = useRef(0);
   const conversationRecorderRef = useRef<MediaRecorder | null>(null);
-  const conversationChunksRef = useRef<Blob[]>([]);
   const conversationStreamRef = useRef<MediaStream | null>(null);
   const conversationStartedAtRef = useRef(0);
-  const conversationTimeoutRef = useRef<number | null>(null);
+  const conversationProcessingRef = useRef<Promise<void>>(Promise.resolve());
   const pendingCorrectionDurationMsRef = useRef(0);
   const [pendingCorrectionAudio, setPendingCorrectionAudio] = useState<Blob | null>(null);
   const [isPreparingCorrectionAudio, setIsPreparingCorrectionAudio] = useState(false);
@@ -762,12 +767,10 @@ export function VoiceApp() {
 
   useEffect(() => {
     return () => {
+      listeningRequestedRef.current = false;
       recognitionRef.current?.abort();
       streamRef.current?.getTracks().forEach((track) => track.stop());
       conversationStreamRef.current?.getTracks().forEach((track) => track.stop());
-      if (conversationTimeoutRef.current !== null) {
-        window.clearTimeout(conversationTimeoutRef.current);
-      }
       window.speechSynthesis?.cancel();
       activePiperAudioRef.current?.pause();
       if (activePiperAudioUrlRef.current) {
@@ -956,6 +959,17 @@ export function VoiceApp() {
     return outputAudioContextRef.current;
   }, []);
 
+  const setAudioSessionType = useCallback(
+    (type: "playback" | "play-and-record") => {
+      try {
+        if (navigator.audioSession) navigator.audioSession.type = type;
+      } catch {
+        // Navegadores sem Audio Session API continuam com o roteamento padrão.
+      }
+    },
+    [],
+  );
+
   const unlockAudioOutput = useCallback(() => {
     const context = ensureOutputAudioContext();
     window.speechSynthesis?.resume();
@@ -973,20 +987,21 @@ export function VoiceApp() {
     return context;
   }, [ensureOutputAudioContext]);
 
-  const speak = useCallback(async (text: string, resumeListening = false) => {
+  const speak = useCallback(async (text: string) => {
     const phrase = text.trim();
     if (!phrase) return;
     const requestId = ++speechRequestRef.current;
-    recognitionRef.current?.abort();
-    if (conversationRecorderRef.current?.state === "recording") {
-      conversationRecorderRef.current.stop();
-    }
     window.speechSynthesis?.cancel();
     activePiperAudioRef.current?.pause();
     activePiperAudioRef.current = null;
     if (activePiperAudioUrlRef.current) {
       URL.revokeObjectURL(activePiperAudioUrlRef.current);
       activePiperAudioUrlRef.current = "";
+    }
+    if (listeningRequestedRef.current) {
+      setAudioSessionType("play-and-record");
+    } else {
+      setAudioSessionType("playback");
     }
     const outputContext = unlockAudioOutput();
     isAppSpeakingRef.current = true;
@@ -1000,13 +1015,10 @@ export function VoiceApp() {
       synthesisEndedAtRef.current = Date.now();
       setIsSpeaking(false);
       setMessage(
-        resumeListening
-          ? "Áudio concluído; preparando escuta automática…"
+        listeningRequestedRef.current
+          ? "Áudio concluído; o microfone continua ativo"
           : finalMessage,
       );
-      if (resumeListening) {
-        window.setTimeout(() => startListeningRef.current?.(), 550);
-      }
     };
 
     let nativeFallbackStarted = false;
@@ -1138,7 +1150,7 @@ export function VoiceApp() {
       );
       playNativeFallback();
     }
-  }, [piperStatus, unlockAudioOutput, updatePiperProgress]);
+  }, [piperStatus, setAudioSessionType, unlockAudioOutput, updatePiperProgress]);
 
   const prepareFaberVoice = async () => {
     setPiperError("");
@@ -1245,11 +1257,17 @@ export function VoiceApp() {
     activeNativeUtteranceRef.current = null;
     isAppSpeakingRef.current = false;
     setIsSpeaking(false);
-    setMessage("Pronto para ouvir");
+    setMessage(
+      listeningRequestedRef.current
+        ? "Áudio interrompido; o microfone continua ativo"
+        : "Pronto para ouvir",
+    );
   };
 
   const startListening = async () => {
-    if (isAppSpeakingRef.current) return;
+    if (listeningRequestedRef.current) return;
+    listeningRequestedRef.current = true;
+    setAudioSessionType("play-and-record");
     unlockAudioOutput();
     setError("");
     setCorrectionSaved(false);
@@ -1259,12 +1277,16 @@ export function VoiceApp() {
     const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
     const useLocalRecognition = localTranscriptionReady;
     if (!navigator.onLine && !useLocalRecognition) {
+      listeningRequestedRef.current = false;
+      setAudioSessionType("playback");
       setError(
         "O reconhecimento offline ainda não foi preparado neste aparelho. Conecte-se e toque em Preparar uso offline.",
       );
       return;
     }
     if (!Recognition && !useLocalRecognition) {
+      listeningRequestedRef.current = false;
+      setAudioSessionType("playback");
       setError("O reconhecimento de voz ainda não funciona neste navegador. Abra o app no Chrome ou Edge.");
       return;
     }
@@ -1272,305 +1294,342 @@ export function VoiceApp() {
     latestFinalRef.current = "";
     latestContextualFinalRef.current = "";
 
-    window.speechSynthesis?.cancel();
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true },
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: false,
+          channelCount: 1,
+        },
       });
+      if (!listeningRequestedRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
       conversationStreamRef.current = stream;
       const recorder = new MediaRecorder(stream, { audioBitsPerSecond: 24000 });
       conversationRecorderRef.current = recorder;
-      conversationChunksRef.current = [];
-      recorder.ondataavailable = (event) => {
-        if (event.data.size) conversationChunksRef.current.push(event.data);
-      };
-      recorder.onstop = async () => {
-        if (conversationTimeoutRef.current !== null) {
-          window.clearTimeout(conversationTimeoutRef.current);
-          conversationTimeoutRef.current = null;
+
+      const processRecordedAudio = async (
+        recordedAudio: Blob,
+        durationMs: number,
+        browserTopTranscript: string,
+        browserContextualTranscript: string,
+      ) => {
+        if (!recordedAudio.size) return;
+        let speakerIdentification = {
+          ready: false,
+          isOwner: true,
+          confidence: 0,
+          sampleCount: 0,
+        };
+        try {
+          const currentSignature = await extractVoiceSignature(recordedAudio);
+          speakerIdentification = identifyEnrolledSpeaker(
+            currentSignature,
+            trainingSamples,
+          );
+        } catch {
+          // Sem assinatura válida, o turno permanece como fala do usuário.
         }
-        const durationMs = Math.max(
-          0,
-          new Date().getTime() - conversationStartedAtRef.current,
-        );
-        if (conversationChunksRef.current.length) {
-          const recordedAudio = new Blob(conversationChunksRef.current, {
-            type: recorder.mimeType,
-          });
-          let speakerIdentification = {
-            ready: false,
-            isOwner: true,
-            confidence: 0,
-            sampleCount: 0,
-          };
+
+        let topTranscript = browserTopTranscript.trim();
+        let contextualTranscript = browserContextualTranscript.trim();
+        let usedLocalTranscription = false;
+
+        if (localTranscriptionReady) {
+          setMessage("Transcrevendo no próprio aparelho; o microfone continua ativo…");
           try {
-            const currentSignature = await extractVoiceSignature(recordedAudio);
-            speakerIdentification = identifyEnrolledSpeaker(
-              currentSignature,
+            const localText = await transcribeLocally(
+              recordedAudio,
+              updateOfflineTranscriptionProgress,
+            );
+            if (localText) {
+              topTranscript = localText;
+              contextualTranscript = localText;
+              usedLocalTranscription = true;
+            }
+          } catch (localError) {
+            if (!navigator.onLine || !topTranscript) {
+              setError(
+                localError instanceof Error
+                  ? `Reconhecimento local: ${localError.message}`
+                  : "Não consegui reconhecer a fala localmente",
+              );
+            }
+          }
+        }
+
+        const looksLikeAppEcho =
+          topTranscript &&
+          (isAppSpeakingRef.current || Date.now() - synthesisEndedAtRef.current < 3500) &&
+          similarity(topTranscript, lastSynthesizedTextRef.current) >= 0.82;
+        if (looksLikeAppEcho) {
+          setMessage("Voz emitida pela Clara ignorada; o microfone continua ativo");
+          return;
+        }
+        if (!topTranscript && !contextualTranscript) return;
+
+        if (speakerIdentification.ready && !speakerIdentification.isOwner) {
+          setPendingCorrectionAudio(null);
+          const role = classifyNonOwnerSpeech(topTranscript || contextualTranscript);
+          const detectedText = topTranscript || contextualTranscript;
+          setLastDetectedSpeaker(role);
+          setLastDetectedText(detectedText);
+          addConsultationTurn(role, detectedText, "microphone");
+          if (role === "patient") {
+            setPatientTurns((turns) => [...turns, detectedText].slice(-20));
+          } else {
+            setTeamTurns((turns) => [...turns, detectedText].slice(-20));
+          }
+          setError("");
+          setMessage(
+            role === "patient"
+              ? "Paciente identificado; continuo ouvindo"
+              : "Equipe ou preceptoria identificada; continuo ouvindo",
+          );
+          return;
+        }
+
+        setLastDetectedSpeaker("doctor");
+        setLastDetectedText(contextualTranscript || topTranscript);
+        setPendingCorrectionAudio(recordedAudio);
+        pendingCorrectionDurationMsRef.current = durationMs;
+
+        let recognizedText = contextualTranscript || topTranscript;
+        let finalText = recognizedText
+          ? applyLearnedCorrection(
+              recognizedText,
+              corrections,
+              recognitionVocabulary,
+            )
+          : "";
+        let usedVoiceProfile = false;
+
+        if (localVoiceTemplateCount > 0) {
+          setMessage("Comparando com suas amostras; o microfone continua ativo…");
+          try {
+            const match = await matchLocalVoiceProfile(
+              recordedAudio,
               trainingSamples,
             );
+            if (match) {
+              const textSupport = recognizedText
+                ? similarity(recognizedText, match.phrase)
+                : 0;
+              const examplesForPhrase = trainingSamples.filter(
+                (sample) => normalize(sample.phrase) === normalize(match.phrase),
+              ).length;
+              const supportedByText = match.score >= 0.82 && textSupport >= 0.38;
+              const supportedByRepeatedVoice =
+                !recognizedText && match.score >= 0.94 && examplesForPhrase >= 2;
+              if (supportedByText || supportedByRepeatedVoice) {
+                finalText = match.phrase;
+                usedVoiceProfile = true;
+              }
+            }
           } catch {
-            // Sem assinatura válida, o turno permanece como fala do usuário.
+            // O reconhecimento do navegador e as correções continuam disponíveis.
           }
+        }
 
-          let topTranscript = latestFinalRef.current.trim();
-          let contextualTranscript = latestContextualFinalRef.current.trim();
-          let usedLocalTranscription = false;
+        if (!finalText) return;
+        if (!recognizedText) recognizedText = finalText;
+        setRawTranscript(recognizedText);
+        setTranscript(finalText);
+        setTranscriptionSource(
+          usedVoiceProfile
+            ? "voice-profile"
+            : usedLocalTranscription
+              ? "local-whisper"
+              : "browser",
+        );
+        setError("");
+        setMessage(
+          usedVoiceProfile
+            ? "Frase reconhecida pelo seu perfil; continuo ouvindo"
+            : usedLocalTranscription
+              ? "Frase reconhecida no aparelho; continuo ouvindo"
+              : "Frase reconhecida; continuo ouvindo",
+        );
+        addConsultationTurn("doctor", finalText, "microphone");
+        if (autoSpeakRef.current) void speak(finalText);
+      };
 
-          if (localTranscriptionReady) {
-            setMessage("Transcrevendo no próprio aparelho…");
-            try {
-              const localText = await transcribeLocally(
-                recordedAudio,
-                updateOfflineTranscriptionProgress,
-              );
-              if (localText) {
-                topTranscript = localText;
-                contextualTranscript = localText;
-                usedLocalTranscription = true;
-              }
-            } catch (localError) {
-              if (!navigator.onLine || !topTranscript) {
-                setError(
-                  localError instanceof Error
-                    ? `Reconhecimento local: ${localError.message}`
-                    : "Não consegui reconhecer a fala localmente",
-                );
-              }
-            }
-          }
-
-          const looksLikeAppEcho =
-            topTranscript &&
-            Date.now() - synthesisEndedAtRef.current < 3500 &&
-            similarity(topTranscript, lastSynthesizedTextRef.current) >= 0.86;
-          if (looksLikeAppEcho) {
-            setMessage("Áudio emitido pela própria Clara foi ignorado");
-            stream.getTracks().forEach((track) => track.stop());
+      recorder.ondataavailable = (event) => {
+        if (!event.data.size) return;
+        const topTranscript = latestFinalRef.current.trim();
+        const contextualTranscript = latestContextualFinalRef.current.trim();
+        latestFinalRef.current = "";
+        latestContextualFinalRef.current = "";
+        const now = Date.now();
+        const durationMs = Math.max(0, now - conversationStartedAtRef.current);
+        conversationStartedAtRef.current = now;
+        if (!topTranscript && !contextualTranscript && !localTranscriptionReady) return;
+        conversationProcessingRef.current = conversationProcessingRef.current
+          .then(() =>
+            processRecordedAudio(
+              event.data,
+              durationMs,
+              topTranscript,
+              contextualTranscript,
+            ),
+          )
+          .catch(() => undefined);
+      };
+      recorder.onstop = () => {
+        const stoppedUnexpectedly = listeningRequestedRef.current;
+        if (stoppedUnexpectedly) {
+          listeningRequestedRef.current = false;
+          setAudioSessionType("playback");
+          setIsListening(false);
+          setError("O microfone foi interrompido pelo navegador. Toque para iniciar novamente.");
+        }
+        void conversationProcessingRef.current.finally(() => {
+          stream.getTracks().forEach((track) => track.stop());
+          if (conversationStreamRef.current === stream) {
             conversationStreamRef.current = null;
-            setIsPreparingCorrectionAudio(false);
-            return;
           }
-          if (speakerIdentification.ready && !speakerIdentification.isOwner) {
-            setPendingCorrectionAudio(null);
-            if (topTranscript) {
-              const role = classifyNonOwnerSpeech(topTranscript);
-              setLastDetectedSpeaker(role);
-              setLastDetectedText(topTranscript);
-              addConsultationTurn(role, topTranscript, "microphone");
-              if (role === "patient") {
-                setPatientTurns((turns) => [...turns, topTranscript].slice(-20));
-              } else {
-                setTeamTurns((turns) => [...turns, topTranscript].slice(-20));
-              }
-              setError("");
-              setMessage(
-                role === "patient"
-                  ? "Paciente identificado; prioridades atualizadas"
-                  : "Equipe ou preceptoria identificada",
-              );
-            } else {
-              setLastDetectedSpeaker("patient");
-              setLastDetectedText("");
-              setMessage("Paciente identificado, mas não consegui transcrever a resposta");
-            }
-            stream.getTracks().forEach((track) => track.stop());
-            conversationStreamRef.current = null;
-            setIsPreparingCorrectionAudio(false);
-            return;
+          if (conversationRecorderRef.current === recorder) {
+            conversationRecorderRef.current = null;
           }
+          setIsPreparingCorrectionAudio(false);
+        });
+      };
+      conversationStartedAtRef.current = Date.now();
+      recorder.start(8_000);
 
-          setLastDetectedSpeaker("doctor");
-          setLastDetectedText(
-            contextualTranscript || topTranscript,
-          );
-          setPendingCorrectionAudio(recordedAudio);
-          pendingCorrectionDurationMsRef.current = durationMs;
+      if (useLocalRecognition) {
+        recognitionRef.current = null;
+        setIsListening(true);
+        setMessage("Microfone contínuo ativo; toque novamente para parar");
+        return;
+      }
 
-          let recognizedText =
-            contextualTranscript || topTranscript;
-          let finalText = recognizedText
-            ? applyLearnedCorrection(
-                recognizedText,
-                corrections,
-                recognitionVocabulary,
-              )
-            : "";
-          let usedVoiceProfile = false;
+      if (!Recognition) return;
+      const recognition = new Recognition();
+      recognition.lang = "pt-BR";
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 5;
 
-          if (localVoiceTemplateCount > 0) {
-            setMessage("Comparando com suas amostras de voz…");
-            try {
-              const match = await matchLocalVoiceProfile(
-                recordedAudio,
-                trainingSamples,
-              );
-              if (match) {
-                const textSupport = recognizedText
-                  ? similarity(recognizedText, match.phrase)
-                  : 0;
-                const examplesForPhrase = trainingSamples.filter(
-                  (sample) => normalize(sample.phrase) === normalize(match.phrase),
-                ).length;
-                const supportedByText = match.score >= 0.82 && textSupport >= 0.38;
-                const supportedByRepeatedVoice =
-                  !recognizedText && match.score >= 0.94 && examplesForPhrase >= 2;
-                if (supportedByText || supportedByRepeatedVoice) {
-                  finalText = match.phrase;
-                  usedVoiceProfile = true;
-                }
-              }
-            } catch {
-              // O reconhecimento do navegador e as correções continuam disponíveis.
-            }
-          }
+      const beginRecognition = () => {
+        if (!listeningRequestedRef.current) return;
+        recognitionRef.current = recognition;
+        try {
+          recognition.start();
+        } catch {
+          window.setTimeout(() => {
+            if (listeningRequestedRef.current) beginRecognition();
+          }, 350);
+        }
+      };
 
-          if (finalText) {
-            if (!recognizedText) recognizedText = finalText;
-            latestFinalRef.current = recognizedText;
-            setRawTranscript(recognizedText);
-            setTranscript(finalText);
-            setTranscriptionSource(
-              usedVoiceProfile
-                ? "voice-profile"
-                : usedLocalTranscription
-                  ? "local-whisper"
-                  : "browser",
-            );
-            setError("");
-            setMessage(
-              usedVoiceProfile
-                ? "Frase reconhecida pelo seu perfil de voz local"
-                : usedLocalTranscription
-                  ? "Frase reconhecida pelo Whisper no aparelho"
-                  : "Frase reconhecida gratuitamente",
-            );
-            addConsultationTurn("doctor", finalText, "microphone");
-            if (autoSpeakRef.current) speak(finalText, true);
+      recognition.onresult = (event) => {
+        let topFinalText = "";
+        let contextualFinalText = "";
+        let interimText = "";
+        for (let index = event.resultIndex; index < event.results.length; index += 1) {
+          const result = event.results[index];
+          if (result.isFinal) {
+            topFinalText += `${result[0].transcript} `;
+            contextualFinalText += `${bestRecognitionAlternative(
+              result,
+              recognitionVocabulary,
+            )} `;
           } else {
-            setMessage("Não consegui entender esta fala");
+            interimText += result[0].transcript;
           }
         }
-        stream.getTracks().forEach((track) => track.stop());
-        conversationStreamRef.current = null;
-        setIsPreparingCorrectionAudio(false);
-      };
-      conversationStartedAtRef.current = new Date().getTime();
-      recorder.start();
-      conversationTimeoutRef.current = window.setTimeout(() => {
-        setMessage("Turno de 28 segundos concluído; processando a fala…");
-        recognitionRef.current?.stop();
-        if (recorder.state === "recording") recorder.stop();
-        setIsListening(false);
-      }, 28_000);
-    } catch {
-      setError("Não consegui acessar o microfone. Verifique a permissão do navegador.");
-      return;
-    }
-
-    if (useLocalRecognition) {
-      recognitionRef.current = null;
-      setIsListening(true);
-      setMessage("Ouvindo localmente; toque novamente quando terminar…");
-      return;
-    }
-
-    if (!Recognition) {
-      if (conversationRecorderRef.current?.state === "recording") {
-        conversationRecorderRef.current.stop();
-      }
-      setError("O reconhecimento deste navegador não pôde ser iniciado.");
-      return;
-    }
-    const recognition = new Recognition();
-    recognition.lang = "pt-BR";
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.maxAlternatives = 5;
-    recognition.onresult = (event) => {
-      let topFinalText = "";
-      let contextualFinalText = "";
-      let interimText = "";
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
-        const result = event.results[index];
-        if (result.isFinal) {
-          topFinalText += result[0].transcript;
-          contextualFinalText += bestRecognitionAlternative(
-            result,
-            recognitionVocabulary,
-          );
+        setInterimTranscript(interimText.trim());
+        const finalCandidate = topFinalText.trim();
+        if (!finalCandidate) return;
+        const isLikelyEcho =
+          (isAppSpeakingRef.current || Date.now() - synthesisEndedAtRef.current < 3500) &&
+          similarity(finalCandidate, lastSynthesizedTextRef.current) >= 0.82;
+        if (isLikelyEcho) {
+          setMessage("Voz da Clara ignorada; continuo ouvindo as outras pessoas");
+          return;
         }
-        else interimText += result[0].transcript;
-      }
-      setInterimTranscript(interimText);
-      if (isAppSpeakingRef.current) return;
-      if (topFinalText.trim()) latestFinalRef.current = topFinalText.trim();
-      if (contextualFinalText.trim()) {
-        latestContextualFinalRef.current = contextualFinalText.trim();
-      }
-    };
-
-    recognition.onerror = (event) => {
-      const messages: Record<string, string> = {
-        "not-allowed": "Permita o acesso ao microfone para eu ouvir você.",
-        "audio-capture": "Não encontrei um microfone disponível.",
-        "no-speech": "Não ouvi uma frase. Vamos tentar novamente?",
-        network: "A conexão falhou durante o reconhecimento. Tente novamente.",
+        latestFinalRef.current = [latestFinalRef.current, finalCandidate]
+          .filter(Boolean)
+          .join(" ")
+          .trim();
+        latestContextualFinalRef.current = [
+          latestContextualFinalRef.current,
+          contextualFinalText.trim(),
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .trim();
+        if (recorder.state === "recording") recorder.requestData();
       };
-      setError(messages[event.error] ?? "Não consegui entender desta vez. Tente novamente.");
-      setMessage(
-        localVoiceTemplateCount
-          ? "Tentando reconhecer pelas suas amostras…"
-          : "Pronto para tentar novamente",
-      );
-      setIsListening(false);
-    };
 
-    recognition.onend = () => {
-      recognitionRef.current = null;
-      setIsListening(false);
-      setInterimTranscript("");
-      setMessage(
-        localVoiceTemplateCount
-          ? "Analisando seu perfil de voz local…"
-          : latestFinalRef.current
-            ? "Frase reconhecida"
-            : "Pronto para ouvir",
-      );
-      if (conversationRecorderRef.current?.state === "recording") {
-        setIsPreparingCorrectionAudio(true);
-        conversationRecorderRef.current.stop();
-      }
-    };
+      recognition.onerror = (event) => {
+        const fatalError = event.error === "not-allowed" || event.error === "audio-capture";
+        const messages: Record<string, string> = {
+          "not-allowed": "Permita o acesso ao microfone para eu ouvir você.",
+          "audio-capture": "Não encontrei um microfone disponível.",
+          "no-speech": "Continuo ouvindo; pode falar quando quiser.",
+          aborted: "Escuta encerrada.",
+          network: "A conexão do reconhecimento oscilou; tentando continuar.",
+        };
+        if (fatalError) {
+          listeningRequestedRef.current = false;
+          setAudioSessionType("playback");
+          setIsListening(false);
+          setError(messages[event.error]);
+          if (recorder.state === "recording") recorder.stop();
+          return;
+        }
+        if (event.error !== "aborted") {
+          setMessage(messages[event.error] ?? "O reconhecimento oscilou; continuo tentando ouvir.");
+        }
+      };
 
-    recognitionRef.current = recognition;
-    setIsListening(true);
-    setMessage("Estou ouvindo e identificando o falante…");
-    try {
-      recognition.start();
+      recognition.onend = () => {
+        setInterimTranscript("");
+        if (!listeningRequestedRef.current) {
+          recognitionRef.current = null;
+          return;
+        }
+        setIsListening(true);
+        setMessage(
+          isAppSpeakingRef.current
+            ? "A Clara está falando e o microfone continua ativo"
+            : "Microfone contínuo ativo; pode continuar falando",
+        );
+        window.setTimeout(beginRecognition, 180);
+      };
+
+      setIsListening(true);
+      setMessage("Microfone contínuo ativo; toque novamente para parar");
+      beginRecognition();
     } catch {
-      if (conversationRecorderRef.current?.state === "recording") {
-        conversationRecorderRef.current.stop();
-      }
+      listeningRequestedRef.current = false;
+      setAudioSessionType("playback");
       setIsListening(false);
-      setError("Não consegui iniciar a escuta. Tente novamente.");
+      setError("Não consegui acessar o microfone. Verifique a permissão do navegador.");
     }
   };
 
-  useEffect(() => {
-    startListeningRef.current = startListening;
-  });
-
   const stopListening = () => {
+    listeningRequestedRef.current = false;
     recognitionRef.current?.stop();
-    if (
-      !recognitionRef.current &&
-      conversationRecorderRef.current?.state === "recording"
-    ) {
+    recognitionRef.current = null;
+    if (conversationRecorderRef.current?.state === "recording") {
       setIsPreparingCorrectionAudio(true);
+      conversationRecorderRef.current.requestData();
       conversationRecorderRef.current.stop();
+    } else {
+      conversationStreamRef.current?.getTracks().forEach((track) => track.stop());
+      conversationStreamRef.current = null;
     }
+    setAudioSessionType("playback");
+    setInterimTranscript("");
     setIsListening(false);
+    setMessage("Gravação encerrada pelo botão");
   };
 
   const saveCorrection = async () => {
@@ -1676,7 +1735,7 @@ export function VoiceApp() {
       setTranscriptionSource("browser");
       setMessage("Turno corrigido para sua fala");
       if (autoSpeakRef.current) {
-        speak(applyLearnedCorrection(text, corrections, recognitionVocabulary), true);
+        speak(applyLearnedCorrection(text, corrections, recognitionVocabulary));
       }
     }
     setLastDetectedSpeaker(role);
@@ -1701,7 +1760,7 @@ export function VoiceApp() {
       "quick-action",
       question.kind,
     );
-    speak(phrase, true);
+    speak(phrase);
   };
 
   const speakTypedPhrase = () => {
@@ -1710,7 +1769,7 @@ export function VoiceApp() {
     setLastDetectedSpeaker("doctor");
     setLastDetectedText(phrase);
     addConsultationTurn("doctor", phrase, "typed");
-    speak(phrase, true);
+    speak(phrase);
   };
 
   const finishConsultation = () => {
@@ -2078,7 +2137,7 @@ export function VoiceApp() {
                 </button>
                 <div className="mic-instruction">
                   <strong>{isListening ? "Pode falar. Estou identificando a voz." : "Toque para ouvir qualquer pessoa"}</strong>
-                  <span>{isListening ? "Toque novamente quando terminar" : "Minha fala, paciente ou equipe serão separados automaticamente"}</span>
+                  <span>{isListening ? "A gravação só termina quando você tocar neste botão novamente" : "Minha fala, paciente ou equipe serão separados automaticamente"}</span>
                 </div>
               </article>
 
@@ -2416,7 +2475,7 @@ export function VoiceApp() {
                 <div className="auto-icon"><Headphones size={22} /></div>
                 <div>
                   <strong>Reprodução automática</strong>
-                  <span>Emite somente sua fala e depois reabre o microfone sem captar o próprio áudio</span>
+                  <span>Emite sua fala sem interromper o microfone e ignora a própria voz reproduzida</span>
                 </div>
                 <button
                   className={`toggle ${autoSpeak ? "on" : ""}`}

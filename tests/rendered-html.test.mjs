@@ -108,6 +108,12 @@ test("ships the clinical consultation voice workflow", async () => {
   assert.match(source, /MediaRecorder/);
   assert.match(source, /perfil-de-voz-clara/);
   assert.match(source, /maxAlternatives = 5/);
+  assert.match(source, /recognition\.continuous = true/);
+  assert.match(source, /recorder\.start\(8_000\)/);
+  assert.match(source, /listeningRequestedRef/);
+  assert.match(source, /navigator\.audioSession\.type = type/);
+  assert.match(source, /A gravação só termina quando você tocar neste botão novamente/);
+  assert.match(source, /Emite sua fala sem interromper o microfone/);
   assert.match(source, /Identificação automática de quem está falando/);
   assert.match(source, /Equipe, colega ou preceptoria/);
   assert.match(source, /prioritizeQuickQuestions/);
@@ -120,6 +126,13 @@ test("ships the clinical consultation voice workflow", async () => {
   assert.match(source, /downloadClinicalRecordPdf/);
   assert.match(source, /clara-active-consultation-v1/);
   assert.match(source, /buildClinicalRecord/);
+
+  const speakingFlow = source.slice(
+    source.indexOf("const speak = useCallback"),
+    source.indexOf("const prepareFaberVoice"),
+  );
+  assert.doesNotMatch(speakingFlow, /recognitionRef\.current\?\.abort/);
+  assert.doesNotMatch(speakingFlow, /conversationRecorderRef\.current\.stop/);
 });
 
 test("ships private free-tier Firebase voice-profile synchronization", async () => {
