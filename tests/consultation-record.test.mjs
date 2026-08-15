@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildClinicalRecord,
   classifyDoctorUtterance,
+  clinicalRecordTemplateForSpecialty,
 } from "../app/consultation-record.ts";
 
 const turn = (id, speaker, text, kind, minute) => ({
@@ -37,4 +38,27 @@ test("builds a reviewable record without inventing missing data", () => {
   assert.match(record, /Não informado na conversa/);
   assert.match(record, /RASCUNHO PARA REVISÃO/);
   assert.match(record, /REGISTRO CRONOLÓGICO DA CONVERSA/);
+});
+
+test("selects the specialty-specific clinical record model", () => {
+  assert.equal(clinicalRecordTemplateForSpecialty("Psiquiatria"), "psychiatry");
+  assert.equal(clinicalRecordTemplateForSpecialty("Pediatria"), "child");
+  assert.equal(clinicalRecordTemplateForSpecialty("Ginecologia"), "woman");
+  assert.equal(clinicalRecordTemplateForSpecialty("Saúde do adolescente"), "adolescent");
+  assert.equal(clinicalRecordTemplateForSpecialty("Geriatria"), "older-adult");
+  assert.equal(clinicalRecordTemplateForSpecialty("Cardiologia"), "general");
+
+  const psychiatry = buildClinicalRecord(
+    [turn("1", "patient", "Estou triste e não consigo dormir.", "information", "00")],
+    "Psiquiatria",
+  );
+  assert.match(psychiatry, /EXAME DO ESTADO MENTAL/);
+  assert.match(psychiatry, /AVALIAÇÃO DE RISCO/);
+  assert.match(psychiatry, /COMPETÊNCIAS DESENVOLVIDAS/);
+
+  const adolescent = buildClinicalRecord(
+    [turn("1", "patient", "Estou sofrendo bullying na escola.", "information", "00")],
+    "Saúde do adolescente",
+  );
+  assert.match(adolescent, /TRIAGEM PSICOSSOCIAL SSHADESS/);
 });

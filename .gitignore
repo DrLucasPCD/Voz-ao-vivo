@@ -46,4 +46,6 @@ ui-debug.log*
 /public/offline-assets/
 /.wrangler/
 /outputs/
+/output/
+/tmp/
 /work/

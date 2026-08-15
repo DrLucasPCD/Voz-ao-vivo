@@ -50,6 +50,7 @@ const SPECIALTY_TOPICS: Record<string, string[]> = {
   Ginecologia: ["dor pélvica", "sangramento vaginal", "corrimento", "coceira genital", "menstruação irregular", "dor na relação"],
   Obstetrícia: ["movimentos do bebê", "contrações", "perda de líquido", "sangramento vaginal", "dor de cabeça", "inchaço na gestação"],
   Pediatria: ["febre na criança", "recusa alimentar", "vômitos", "diarreia", "tosse", "mudança de comportamento"],
+  "Saúde do adolescente": ["escola", "família", "humor", "autolesão", "uso de substâncias", "sexualidade"],
   Neonatologia: ["dificuldade para mamar", "pele amarelada", "respiração rápida", "febre no bebê", "pouca urina", "sonolência excessiva"],
   Psiquiatria: ["humor deprimido", "ansiedade", "insônia", "crise de pânico", "pensamentos de morte", "uso de substâncias"],
   Geriatria: ["queda", "esquecimento", "perda de autonomia", "tontura", "incontinência", "uso de muitos medicamentos"],

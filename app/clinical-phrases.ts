@@ -203,6 +203,15 @@ export const CLINICAL_PHRASES: ClinicalPhrase[] = [
     "Como foram a gestação, o parto e o desenvolvimento da criança?",
     "A criança está mais sonolenta, irritada ou com dificuldade para respirar?",
   ]),
+  ...specialty("Saúde do adolescente", [
+    "Você prefere conversar primeiro com ou sem seu acompanhante na sala?",
+    "Como estão a escola, suas amizades e sua convivência em casa?",
+    "Como estão seu sono, seu humor, sua autoestima e sua alimentação?",
+    "Você usa cigarro, vape, álcool, maconha ou alguma outra substância?",
+    "Você se sente seguro em casa, na escola e nos seus relacionamentos?",
+    "Já pensou em se machucar, teve autolesão ou pensou em morrer?",
+    "Posso fazer algumas perguntas confidenciais sobre sexualidade e prevenção?",
+  ]),
   ...specialty("Neonatologia", [
     "Com quantas semanas o bebê nasceu e qual foi o peso ao nascer?",
     "O bebê precisou de reanimação, oxigênio ou internação após o parto?",

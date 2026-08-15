@@ -52,7 +52,9 @@ import {
 } from "./quick-clinical-questions";
 import {
   buildClinicalRecord,
+  CLINICAL_RECORD_TEMPLATE_LABELS,
   classifyDoctorUtterance,
+  clinicalRecordTemplateForSpecialty,
   type ConsultationSpeaker,
   type ConsultationTurn,
   type ConsultationUtteranceKind,
@@ -422,6 +424,8 @@ export function VoiceApp() {
   const [recordOpen, setRecordOpen] = useState(false);
   const [recordText, setRecordText] = useState("");
   const [recordCopied, setRecordCopied] = useState(false);
+  const [recordPdfDownloaded, setRecordPdfDownloaded] = useState(false);
+  const [isGeneratingRecordPdf, setIsGeneratingRecordPdf] = useState(false);
   const [recordMessage, setRecordMessage] = useState("");
   const [transcriptionSource, setTranscriptionSource] = useState<
     "browser" | "voice-profile" | "local-whisper"
@@ -1712,6 +1716,7 @@ export function VoiceApp() {
   const finishConsultation = () => {
     setRecordText(buildClinicalRecord(consultationTurns, selectedSpecialty));
     setRecordCopied(false);
+    setRecordPdfDownloaded(false);
     setRecordMessage("");
     setRecordOpen(true);
   };
@@ -1726,10 +1731,27 @@ export function VoiceApp() {
     }
   };
 
-  const clearConsultationAfterCopy = () => {
-    if (!recordCopied) return;
+  const downloadRecordPdf = async () => {
+    if (!recordText.trim() || isGeneratingRecordPdf) return;
+    setIsGeneratingRecordPdf(true);
+    setRecordMessage("");
+    try {
+      const { downloadClinicalRecordPdf } = await import("./clinical-record-pdf");
+      const filename = downloadClinicalRecordPdf(recordText, selectedSpecialty);
+      setRecordPdfDownloaded(true);
+      setRecordMessage(`PDF baixado: ${filename}. Agora o histórico pode ser apagado.`);
+    } catch (pdfError) {
+      console.error("[Clara: PDF do prontuário]", pdfError);
+      setRecordMessage("Não consegui gerar o PDF neste navegador. Tente novamente antes de apagar o histórico.");
+    } finally {
+      setIsGeneratingRecordPdf(false);
+    }
+  };
+
+  const clearConsultationAfterDownload = () => {
+    if (!recordPdfDownloaded) return;
     const confirmed = window.confirm(
-      "Confirma que o prontuário já foi copiado? Todo o histórico desta consulta será apagado deste dispositivo.",
+      "Confirma que o PDF do prontuário foi baixado? Todo o histórico desta consulta será apagado deste dispositivo.",
     );
     if (!confirmed) return;
     setConsultationTurns([]);
@@ -1739,6 +1761,7 @@ export function VoiceApp() {
     setLastDetectedText("");
     setRecordText("");
     setRecordCopied(false);
+    setRecordPdfDownloaded(false);
     setRecordMessage("");
     setRecordOpen(false);
     clearPhrase();
@@ -2004,7 +2027,7 @@ export function VoiceApp() {
         </div>
       </header>
 
-      <main id="inicio">
+      <main id="inicio" className={mode === "talk" ? "talk-main" : "training-main"}>
         {mode === "talk" ? (
           <>
             <section className="hero">
@@ -2355,7 +2378,7 @@ export function VoiceApp() {
                   </div>
                   {consultationTurns.length ? (
                     <div className="consultation-turns">
-                      {consultationTurns.slice(-8).map((turn) => (
+                      {consultationTurns.slice(-4).map((turn) => (
                         <div className={`consultation-turn ${turn.speaker}`} key={turn.id}>
                           <strong>
                             {turn.speaker === "doctor"
@@ -2551,8 +2574,8 @@ export function VoiceApp() {
                 <span className="section-label"><FileText size={17} /> Rascunho clínico local</span>
                 <h2 id="record-modal-title">Prontuário da consulta</h2>
                 <p>
-                  Gerado apenas com o que foi registrado. Campos ausentes permanecem como
-                  “não informado”; revise tudo com a preceptoria.
+                  Modelo: {CLINICAL_RECORD_TEMPLATE_LABELS[clinicalRecordTemplateForSpecialty(selectedSpecialty)]}.
+                  Gerado apenas com o que foi registrado; revise tudo com a preceptoria.
                 </p>
               </div>
               <button
@@ -2569,6 +2592,7 @@ export function VoiceApp() {
               onChange={(event) => {
                 setRecordText(event.target.value);
                 setRecordCopied(false);
+                setRecordPdfDownloaded(false);
                 setRecordMessage("");
               }}
               aria-label="Prontuário editável"
@@ -2582,15 +2606,26 @@ export function VoiceApp() {
               <button className="secondary-button" onClick={() => setRecordOpen(false)}>
                 Continuar consulta
               </button>
-              <button className="primary-button" onClick={copyClinicalRecord}>
+              <button className="secondary-button" onClick={copyClinicalRecord}>
                 {recordCopied ? <ClipboardCheck size={19} /> : <ClipboardCopy size={19} />}
                 {recordCopied ? "Prontuário copiado" : "Copiar prontuário"}
               </button>
-              {recordCopied ? (
-                <button className="delete-consultation-button" onClick={clearConsultationAfterCopy}>
-                  <Trash2 size={17} /> Já copiei — apagar histórico
-                </button>
-              ) : null}
+              <button
+                className="primary-button"
+                onClick={downloadRecordPdf}
+                disabled={isGeneratingRecordPdf}
+              >
+                {isGeneratingRecordPdf ? <RefreshCw size={19} /> : recordPdfDownloaded ? <Check size={19} /> : <Download size={19} />}
+                {isGeneratingRecordPdf ? "Gerando PDF…" : recordPdfDownloaded ? "PDF baixado" : "Baixar prontuário em PDF"}
+              </button>
+              <button
+                className="delete-consultation-button"
+                onClick={clearConsultationAfterDownload}
+                disabled={!recordPdfDownloaded}
+                title={recordPdfDownloaded ? "Apagar histórico desta consulta" : "Baixe o PDF antes de apagar"}
+              >
+                <Trash2 size={17} /> {recordPdfDownloaded ? "PDF salvo — apagar histórico" : "Baixe o PDF para liberar a exclusão"}
+              </button>
             </div>
           </section>
         </div>

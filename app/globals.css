@@ -509,6 +509,70 @@ h1 em { color: var(--green-2); font-weight: 500; }
 .record-actions { display: flex; align-items: center; justify-content: flex-end; gap: 9px; flex-wrap: wrap; }
 .record-actions .primary-button, .record-actions .secondary-button { flex: 0 0 auto; min-height: 42px; }
 .delete-consultation-button { min-height: 42px; padding: 0 14px; border: 1px solid #d9aaa4; border-radius: 11px; background: #fff2ef; color: #8f3932; display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 850; cursor: pointer; }
+.delete-consultation-button:disabled { border-color: var(--line); background: #f1f2ed; color: #89938f; cursor: not-allowed; }
+
+/* A consulta ocupa a primeira tela em monitores e notebooks. Os recursos de
+   preparação ficam depois do espaço de trabalho, no fim da página. */
+main.talk-main {
+  width: min(1480px, calc(100% - 32px));
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(380px, .92fr);
+  grid-template-rows: auto auto minmax(440px, calc(100dvh - 325px)) auto auto auto auto;
+  grid-template-areas:
+    "hero hero"
+    "context context"
+    "talk lower"
+    "speaker lower"
+    "free free"
+    "offline offline"
+    "piper piper";
+  column-gap: 14px;
+}
+
+.talk-main .hero { grid-area: hero; padding: 18px 4px 12px; grid-template-columns: 1fr auto; gap: 24px; }
+.talk-main .eyebrow { margin-bottom: 7px; font-size: 9px; }
+.talk-main h1 { font-size: clamp(34px, 4vw, 50px); line-height: .98; }
+.talk-main .hero-copy { max-width: 520px; font-size: 12px; line-height: 1.45; }
+.talk-main .clinical-context { grid-area: context; margin: 0 0 12px; padding: 9px 12px; border-radius: 12px; }
+.talk-main .clinical-context > div { display: flex; align-items: baseline; gap: 10px; }
+.talk-main .clinical-context select { min-height: 36px; }
+.talk-main .talk-grid { grid-area: talk; min-width: 0; height: 100%; gap: 12px; }
+.talk-main .listen-card, .talk-main .message-card { min-height: 0; height: 100%; border-radius: 18px; }
+.talk-main .listen-card { padding: 15px 16px 18px; }
+.talk-main .message-card { padding: 16px 18px; }
+.talk-main .status-line { font-size: 11px; }
+.talk-main .learned-count { font-size: 9px; }
+.talk-main .mic-button { width: 116px; height: 116px; margin: clamp(26px, 6vh, 58px) 0 24px; }
+.talk-main .mic-instruction strong { font-size: 14px; }
+.talk-main .mic-instruction span { font-size: 11px; }
+.talk-main .transcript-wrap { min-height: 120px; margin-top: 8px; }
+.talk-main .transcript-wrap textarea { min-height: 120px; font-size: clamp(22px, 2.2vw, 31px); padding-top: 8px; }
+.talk-main .message-actions { padding-top: 10px; }
+.talk-main .primary-button, .talk-main .secondary-button { min-height: 42px; }
+.talk-main .speaker-detection-card { grid-area: speaker; margin: 10px 0 0; padding: 9px 12px; border-radius: 12px; }
+.talk-main .lower-grid { grid-area: lower; min-width: 0; min-height: 0; height: 100%; margin: 0; display: grid; grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; gap: 10px; }
+.talk-main .quick-card { min-height: 0; overflow: hidden; padding: 14px 15px; display: flex; flex-direction: column; border-radius: 18px; }
+.talk-main .small-card-heading { margin-bottom: 8px; }
+.talk-main .patient-context-box { margin-bottom: 8px; padding: 8px 10px; }
+.talk-main .patient-context-box span { max-height: 32px; overflow: hidden; font-size: 9px; }
+.talk-main .quick-kind-filters { margin-bottom: 8px; gap: 5px; }
+.talk-main .quick-kind-filters button { min-height: 27px; padding: 0 8px; font-size: 9px; }
+.talk-main .quick-list { flex: 1; min-height: 125px; max-height: clamp(125px, 22vh, 200px); overflow-y: auto; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.talk-main .quick-list button { min-height: 47px; padding: 7px 9px; font-size: 10px; }
+.talk-main .show-questions-button { min-height: 32px; margin-top: 7px; }
+.talk-main .team-context-note { margin-top: 7px; padding-top: 6px; }
+.talk-main .consultation-history { margin-top: 8px; padding-top: 8px; }
+.talk-main .consultation-history-heading { margin-bottom: 6px; }
+.talk-main .consultation-history-heading span { display: none; }
+.talk-main .consultation-turns { max-height: 110px; gap: 4px; }
+.talk-main .consultation-turn { padding: 5px 7px; }
+.talk-main .empty-consultation-history { padding: 7px 9px; font-size: 9px; }
+.talk-main .finish-consultation-button { min-height: 36px; margin-top: 7px; }
+.talk-main .auto-card { padding: 10px 12px; border-radius: 14px; }
+.talk-main .auto-icon { width: 34px; height: 34px; }
+.talk-main .free-recognition-card { grid-area: free; margin-top: 34px; }
+.talk-main .offline-card { grid-area: offline; }
+.talk-main .piper-voice-card { grid-area: piper; margin-bottom: 40px; }
 
 .training-view { min-height: calc(100vh - 160px); padding: 68px 6px; display: grid; grid-template-columns: .78fr 1.22fr; gap: 70px; align-items: center; }
 .training-intro > p:not(.eyebrow) { max-width: 470px; color: var(--muted); font-size: 16px; line-height: 1.65; margin: 26px 0; }
@@ -572,6 +636,20 @@ footer { width: min(1184px, calc(100% - 48px)); margin: 0 auto; min-height: 74px
 @keyframes ripple { 0% { transform: scale(.92); opacity: .75; } 100% { transform: scale(1.22); opacity: 0; } }
 @keyframes blink { 50% { opacity: .35; } }
 @keyframes softPulse { 50% { box-shadow: 0 0 0 10px rgba(189, 73, 63, .12); } }
+
+@media (max-width: 1100px) {
+  main.talk-main { width: min(100% - 32px, 920px); display: block; }
+  .talk-main .hero { padding: 34px 4px 24px; }
+  .talk-main .clinical-context { margin-bottom: 14px; }
+  .talk-main .talk-grid { height: auto; }
+  .talk-main .listen-card, .talk-main .message-card { min-height: 390px; height: auto; }
+  .talk-main .speaker-detection-card { margin-top: 12px; }
+  .talk-main .lower-grid { height: auto; margin: 12px 0 0; }
+  .talk-main .quick-card { overflow: visible; }
+  .talk-main .quick-list { max-height: 480px; }
+  .talk-main .consultation-turns { max-height: 180px; }
+  .talk-main .free-recognition-card { margin-top: 28px; }
+}
 
 @media (max-width: 900px) {
   .topbar { grid-template-columns: 1fr auto; }
