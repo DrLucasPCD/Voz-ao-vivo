@@ -6,10 +6,13 @@ import {
   Check,
   ChevronRight,
   CircleStop,
+  ClipboardCheck,
+  ClipboardCopy,
   Cloud,
   Database,
   Download,
   FileAudio,
+  FileText,
   Headphones,
   HardDriveDownload,
   LogIn,
@@ -24,6 +27,7 @@ import {
   Volume2,
   WandSparkles,
   WifiOff,
+  X,
 } from "lucide-react";
 import { strToU8, zipSync } from "fflate";
 import {
@@ -44,7 +48,15 @@ import {
 import {
   classifyNonOwnerSpeech,
   prioritizeQuickQuestions,
+  type QuickClinicalQuestion,
 } from "./quick-clinical-questions";
+import {
+  buildClinicalRecord,
+  classifyDoctorUtterance,
+  type ConsultationSpeaker,
+  type ConsultationTurn,
+  type ConsultationUtteranceKind,
+} from "./consultation-record";
 import {
   deleteCloudVoiceSample,
   downloadVoiceSample,
@@ -374,6 +386,15 @@ export function VoiceApp() {
   >(null);
   const [lastDetectedText, setLastDetectedText] = useState("");
   const [showAllQuickQuestions, setShowAllQuickQuestions] = useState(false);
+  const [quickKindFilter, setQuickKindFilter] = useState<
+    "all" | "question" | "orientation" | "conduct"
+  >("all");
+  const [consultationTurns, setConsultationTurns] = useState<ConsultationTurn[]>([]);
+  const [consultationHydrated, setConsultationHydrated] = useState(false);
+  const [recordOpen, setRecordOpen] = useState(false);
+  const [recordText, setRecordText] = useState("");
+  const [recordCopied, setRecordCopied] = useState(false);
+  const [recordMessage, setRecordMessage] = useState("");
   const [transcriptionSource, setTranscriptionSource] = useState<
     "browser" | "voice-profile" | "local-whisper"
   >("browser");
@@ -397,6 +418,39 @@ export function VoiceApp() {
   const pendingCorrectionDurationMsRef = useRef(0);
   const [pendingCorrectionAudio, setPendingCorrectionAudio] = useState<Blob | null>(null);
   const [isPreparingCorrectionAudio, setIsPreparingCorrectionAudio] = useState(false);
+
+  const addConsultationTurn = useCallback(
+    (
+      speaker: ConsultationSpeaker,
+      text: string,
+      source: ConsultationTurn["source"],
+      kind?: ConsultationUtteranceKind,
+    ) => {
+      const cleanText = text.trim();
+      if (!cleanText) return;
+      const turn: ConsultationTurn = {
+        id: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
+        speaker,
+        text: cleanText,
+        kind:
+          kind ??
+          (speaker === "doctor" ? classifyDoctorUtterance(cleanText) : "information"),
+        createdAt: new Date().toISOString(),
+        source,
+      };
+      setConsultationTurns((turns) => {
+        const previous = turns.at(-1);
+        if (
+          previous?.speaker === turn.speaker &&
+          normalize(previous.text) === normalize(turn.text)
+        ) {
+          return turns;
+        }
+        return [...turns, turn].slice(-250);
+      });
+    },
+    [],
+  );
 
   const [selectedSpecialty, setSelectedSpecialty] = useState("Clínica geral");
   const [promptIndex, setPromptIndex] = useState(0);
@@ -507,6 +561,50 @@ export function VoiceApp() {
   }, []);
 
   useEffect(() => {
+    const savedConsultation = localStorage.getItem("clara-active-consultation-v1");
+    window.setTimeout(() => {
+      if (savedConsultation) {
+        try {
+          const parsed = JSON.parse(savedConsultation) as ConsultationTurn[];
+          if (Array.isArray(parsed)) {
+            const validTurns = parsed.filter(
+              (turn) =>
+                turn &&
+                typeof turn.id === "string" &&
+                typeof turn.text === "string" &&
+                ["doctor", "patient", "team"].includes(turn.speaker),
+            );
+            setConsultationTurns(validTurns.slice(-250));
+            setPatientTurns(
+              validTurns
+                .filter((turn) => turn.speaker === "patient")
+                .map((turn) => turn.text)
+                .slice(-20),
+            );
+            setTeamTurns(
+              validTurns
+                .filter((turn) => turn.speaker === "team")
+                .map((turn) => turn.text)
+                .slice(-20),
+            );
+          }
+        } catch {
+          localStorage.removeItem("clara-active-consultation-v1");
+        }
+      }
+      setConsultationHydrated(true);
+    }, 0);
+  }, []);
+
+  useEffect(() => {
+    if (!consultationHydrated) return;
+    localStorage.setItem(
+      "clara-active-consultation-v1",
+      JSON.stringify(consultationTurns),
+    );
+  }, [consultationHydrated, consultationTurns]);
+
+  useEffect(() => {
     if (!user) return;
     let active = true;
 
@@ -604,13 +702,23 @@ export function VoiceApp() {
 
   const specialtyPhrases = phrasesForSpecialty(selectedSpecialty);
   const patientContext = patientTurns.join(" ");
+  const usedDoctorTexts = consultationTurns
+    .filter((turn) => turn.speaker === "doctor")
+    .map((turn) => turn.text);
   const prioritizedQuickQuestions = prioritizeQuickQuestions(
     selectedSpecialty,
     patientContext,
+    usedDoctorTexts,
   );
+  const filteredQuickQuestions =
+    quickKindFilter === "all"
+      ? prioritizedQuickQuestions
+      : prioritizedQuickQuestions.filter(
+          (question) => question.kind === quickKindFilter,
+        );
   const visibleQuickQuestions = showAllQuickQuestions
-    ? prioritizedQuickQuestions
-    : prioritizedQuickQuestions.slice(0, 10);
+    ? filteredQuickQuestions
+    : filteredQuickQuestions.slice(0, 10);
   const recognitionVocabulary = Array.from(
     new Set([
       ...specialtyPhrases.map((phrase) => phrase.text),
@@ -1046,6 +1154,7 @@ export function VoiceApp() {
               const role = classifyNonOwnerSpeech(topTranscript);
               setLastDetectedSpeaker(role);
               setLastDetectedText(topTranscript);
+              addConsultationTurn(role, topTranscript, "microphone");
               if (role === "patient") {
                 setPatientTurns((turns) => [...turns, topTranscript].slice(-20));
               } else {
@@ -1133,6 +1242,7 @@ export function VoiceApp() {
                   ? "Frase reconhecida pelo Whisper no aparelho"
                   : "Frase reconhecida gratuitamente",
             );
+            addConsultationTurn("doctor", finalText, "microphone");
             if (autoSpeakRef.current) speak(finalText, true);
           } else {
             setMessage("Não consegui entender esta fala");
@@ -1321,6 +1431,24 @@ export function VoiceApp() {
 
     setPatientTurns((turns) => removeLastMatchingTurn(turns, text));
     setTeamTurns((turns) => removeLastMatchingTurn(turns, text));
+    setConsultationTurns((turns) => {
+      const matchingIndex = turns.findLastIndex(
+        (turn) => normalize(turn.text) === normalize(text),
+      );
+      if (matchingIndex < 0) return turns;
+      return turns.map((turn, index) =>
+        index === matchingIndex
+          ? {
+              ...turn,
+              speaker: role,
+              kind:
+                role === "doctor"
+                  ? classifyDoctorUtterance(turn.text)
+                  : "information",
+            }
+          : turn,
+      );
+    });
     if (role === "patient") {
       setPatientTurns((turns) => [...turns, text].slice(-20));
       if (lastDetectedSpeaker === "doctor" && normalize(rawTranscript) === normalize(text)) {
@@ -1352,12 +1480,64 @@ export function VoiceApp() {
     localStorage.setItem("clara-auto-speak", String(next));
   };
 
-  const playQuickPhrase = (phrase: string) => {
+  const playQuickPhrase = (question: QuickClinicalQuestion) => {
+    const phrase = question.text;
     setRawTranscript("");
     setTranscript(phrase);
     setLastDetectedSpeaker("doctor");
     setLastDetectedText(phrase);
+    addConsultationTurn(
+      "doctor",
+      phrase,
+      "quick-action",
+      question.kind,
+    );
     speak(phrase, true);
+  };
+
+  const speakTypedPhrase = () => {
+    const phrase = transcript.trim();
+    if (!phrase) return;
+    setLastDetectedSpeaker("doctor");
+    setLastDetectedText(phrase);
+    addConsultationTurn("doctor", phrase, "typed");
+    speak(phrase, true);
+  };
+
+  const finishConsultation = () => {
+    setRecordText(buildClinicalRecord(consultationTurns, selectedSpecialty));
+    setRecordCopied(false);
+    setRecordMessage("");
+    setRecordOpen(true);
+  };
+
+  const copyClinicalRecord = async () => {
+    try {
+      await navigator.clipboard.writeText(recordText);
+      setRecordCopied(true);
+      setRecordMessage("Prontuário copiado. Revise antes de salvar no sistema oficial.");
+    } catch {
+      setRecordMessage("Não consegui copiar automaticamente. Selecione o texto e copie manualmente.");
+    }
+  };
+
+  const clearConsultationAfterCopy = () => {
+    if (!recordCopied) return;
+    const confirmed = window.confirm(
+      "Confirma que o prontuário já foi copiado? Todo o histórico desta consulta será apagado deste dispositivo.",
+    );
+    if (!confirmed) return;
+    setConsultationTurns([]);
+    setPatientTurns([]);
+    setTeamTurns([]);
+    setLastDetectedSpeaker(null);
+    setLastDetectedText("");
+    setRecordText("");
+    setRecordCopied(false);
+    setRecordMessage("");
+    setRecordOpen(false);
+    clearPhrase();
+    localStorage.removeItem("clara-active-consultation-v1");
   };
 
   const selectSpecialty = (specialtyName: string) => {
@@ -1699,7 +1879,7 @@ export function VoiceApp() {
                 <div className="message-actions">
                   <button
                     className="primary-button"
-                    onClick={isSpeaking ? stopSpeaking : () => speak(transcript, true)}
+                    onClick={isSpeaking ? stopSpeaking : speakTypedPhrase}
                     disabled={!transcript.trim()}
                   >
                     {isSpeaking ? <Pause size={20} /> : <Volume2 size={20} />}
@@ -1878,24 +2058,50 @@ export function VoiceApp() {
             <section className="lower-grid">
               <article className="quick-card">
                 <div className="small-card-heading">
-                  <span><Sparkles size={16} /> Perguntas rápidas priorizadas</span>
+                  <span><Sparkles size={16} /> Falas rápidas priorizadas</span>
                   <small>{prioritizedQuickQuestions.length} opções em {selectedSpecialty}</small>
                 </div>
                 <div className="patient-context-box">
-                  <strong>Contexto ouvido do paciente</strong>
+                  <strong>Raciocínio clínico adaptativo</strong>
                   <span>
                     {patientTurns.length
                       ? patientTurns.slice(-3).join(" • ")
-                      : "Quando outra voz relatar sintomas, as perguntas serão reordenadas automaticamente."}
+                      : "Quando o paciente relatar sintomas, perguntas, orientações e condutas seguras serão reordenadas automaticamente."}
                   </span>
-                  {patientTurns.length ? (
-                    <button onClick={() => setPatientTurns([])}>Limpar contexto</button>
-                  ) : null}
+                </div>
+                <div className="quick-kind-filters" aria-label="Filtrar falas rápidas por tipo">
+                  {([
+                    ["all", "Todas"],
+                    ["question", "Perguntas"],
+                    ["orientation", "Orientações"],
+                    ["conduct", "Condutas"],
+                  ] as const).map(([value, label]) => (
+                    <button
+                      key={value}
+                      className={quickKindFilter === value ? "active" : ""}
+                      onClick={() => {
+                        setQuickKindFilter(value);
+                        setShowAllQuickQuestions(false);
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
                 <div className="quick-list">
                   {visibleQuickQuestions.map((question) => (
-                    <button key={question.id} onClick={() => playQuickPhrase(question.text)}>
-                      {question.text}<Play size={14} fill="currentColor" />
+                    <button key={question.id} onClick={() => playQuickPhrase(question)}>
+                      <span>
+                        <small className={`quick-kind ${question.kind}`}>
+                          {question.kind === "question"
+                            ? "Pergunta"
+                            : question.kind === "orientation"
+                              ? "Orientação"
+                              : "Conduta"}
+                        </small>
+                        {question.text}
+                      </span>
+                      <Play size={14} fill="currentColor" />
                     </button>
                   ))}
                 </div>
@@ -1905,13 +2111,55 @@ export function VoiceApp() {
                 >
                   {showAllQuickQuestions
                     ? "Mostrar somente as 10 prioritárias"
-                    : `Ver todas as ${prioritizedQuickQuestions.length} perguntas`}
+                    : `Ver todas as ${filteredQuickQuestions.length} falas`}
                 </button>
                 {teamTurns.length ? (
                   <p className="team-context-note">
                     <strong>Equipe/preceptoria:</strong> {teamTurns.slice(-2).join(" • ")}
                   </p>
                 ) : null}
+                <section className="consultation-history" aria-label="Histórico desta consulta">
+                  <div className="consultation-history-heading">
+                    <div>
+                      <strong>Mini-histórico desta consulta</strong>
+                      <span>Salvo somente neste dispositivo até você copiar o prontuário.</span>
+                    </div>
+                    <small>{consultationTurns.length} falas</small>
+                  </div>
+                  {consultationTurns.length ? (
+                    <div className="consultation-turns">
+                      {consultationTurns.slice(-8).map((turn) => (
+                        <div className={`consultation-turn ${turn.speaker}`} key={turn.id}>
+                          <strong>
+                            {turn.speaker === "doctor"
+                              ? "Eu"
+                              : turn.speaker === "patient"
+                                ? "Paciente"
+                                : "Equipe"}
+                          </strong>
+                          <span>{turn.text}</span>
+                          <time dateTime={turn.createdAt}>
+                            {new Date(turn.createdAt).toLocaleTimeString("pt-BR", {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </time>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="empty-consultation-history">
+                      As falas identificadas aparecerão aqui e não serão sugeridas novamente.
+                    </p>
+                  )}
+                  <button
+                    className="finish-consultation-button"
+                    onClick={finishConsultation}
+                    disabled={!consultationTurns.length}
+                  >
+                    <FileText size={17} /> Encerrar consulta e gerar prontuário
+                  </button>
+                </section>
               </article>
 
               <article className="auto-card">
@@ -2062,6 +2310,64 @@ export function VoiceApp() {
           </section>
         )}
       </main>
+
+      {recordOpen ? (
+        <div className="record-modal-backdrop" role="presentation">
+          <section
+            className="record-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="record-modal-title"
+          >
+            <div className="record-modal-heading">
+              <div>
+                <span className="section-label"><FileText size={17} /> Rascunho clínico local</span>
+                <h2 id="record-modal-title">Prontuário da consulta</h2>
+                <p>
+                  Gerado apenas com o que foi registrado. Campos ausentes permanecem como
+                  “não informado”; revise tudo com a preceptoria.
+                </p>
+              </div>
+              <button
+                className="icon-button"
+                onClick={() => setRecordOpen(false)}
+                aria-label="Fechar prontuário e continuar consulta"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <textarea
+              className="record-textarea"
+              value={recordText}
+              onChange={(event) => {
+                setRecordText(event.target.value);
+                setRecordCopied(false);
+                setRecordMessage("");
+              }}
+              aria-label="Prontuário editável"
+            />
+            {recordMessage ? (
+              <p className={`record-message ${recordCopied ? "success" : ""}`} role="status">
+                {recordMessage}
+              </p>
+            ) : null}
+            <div className="record-actions">
+              <button className="secondary-button" onClick={() => setRecordOpen(false)}>
+                Continuar consulta
+              </button>
+              <button className="primary-button" onClick={copyClinicalRecord}>
+                {recordCopied ? <ClipboardCheck size={19} /> : <ClipboardCopy size={19} />}
+                {recordCopied ? "Prontuário copiado" : "Copiar prontuário"}
+              </button>
+              {recordCopied ? (
+                <button className="delete-consultation-button" onClick={clearConsultationAfterCopy}>
+                  <Trash2 size={17} /> Já copiei — apagar histórico
+                </button>
+              ) : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       <footer>
         <span>Clara — sua voz, mais clara.</span>

@@ -445,12 +445,35 @@ h1 em { color: var(--green-2); font-weight: 500; }
 .patient-context-box { margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; background: #f0f5eb; display: grid; grid-template-columns: 1fr auto; gap: 5px 12px; }
 .patient-context-box strong { font-size: 11px; }
 .patient-context-box span { color: var(--muted); font-size: 11px; line-height: 1.45; }
-.patient-context-box button { grid-column: 2; grid-row: 1 / 3; border: 0; background: transparent; color: var(--green-2); font-size: 10px; font-weight: 800; cursor: pointer; }
+.quick-kind-filters { margin: 0 0 12px; display: flex; gap: 7px; flex-wrap: wrap; }
+.quick-kind-filters button { min-height: 32px; padding: 0 11px; border: 1px solid var(--line); border-radius: 999px; background: white; color: var(--muted); font-size: 10px; font-weight: 800; cursor: pointer; }
+.quick-kind-filters button.active { border-color: var(--green-2); background: var(--green); color: white; }
 .quick-list { max-height: 650px; overflow-y: auto; padding-right: 4px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; }
 .quick-list button { min-height: 58px; border: 1px solid var(--line); border-radius: 12px; background: #fafaf5; color: var(--ink); padding: 9px 12px; display: flex; justify-content: space-between; align-items: center; gap: 8px; text-align: left; cursor: pointer; font-size: 13px; font-weight: 700; }
+.quick-list button > span { display: grid; gap: 5px; }
+.quick-kind { width: fit-content; padding: 2px 6px; border-radius: 999px; background: #e8eeeb; color: var(--muted); font-size: 8px; font-weight: 900; letter-spacing: .05em; text-transform: uppercase; }
+.quick-kind.orientation { background: #e8f2d3; color: #53651b; }
+.quick-kind.conduct { background: #e7ebf7; color: #41577d; }
+.quick-kind.question { background: var(--mint); color: var(--green-2); }
 .quick-list button:hover { border-color: #a2bfb6; background: var(--mint); }
 .show-questions-button { width: 100%; min-height: 40px; margin-top: 12px; border: 1px solid #a3c8ba; border-radius: 11px; background: var(--mint); color: var(--green); font-size: 11px; font-weight: 800; cursor: pointer; }
 .team-context-note { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; line-height: 1.45; }
+.consultation-history { margin-top: 18px; padding-top: 17px; border-top: 1px solid var(--line); }
+.consultation-history-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 11px; }
+.consultation-history-heading > div { display: grid; gap: 3px; }
+.consultation-history-heading strong { font-size: 13px; }
+.consultation-history-heading span, .consultation-history-heading small { color: var(--muted); font-size: 10px; line-height: 1.4; }
+.consultation-history-heading small { white-space: nowrap; }
+.consultation-turns { max-height: 250px; overflow-y: auto; display: grid; gap: 6px; }
+.consultation-turn { display: grid; grid-template-columns: 54px 1fr auto; align-items: start; gap: 8px; padding: 8px 10px; border-radius: 9px; background: #f7f7f2; font-size: 10px; line-height: 1.4; }
+.consultation-turn strong { color: var(--green-2); }
+.consultation-turn.patient strong { color: #755421; }
+.consultation-turn.team strong { color: #52647f; }
+.consultation-turn span { min-width: 0; }
+.consultation-turn time { color: var(--muted); font-size: 9px; }
+.empty-consultation-history { margin: 0; padding: 12px; border-radius: 10px; background: #f7f7f2; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.finish-consultation-button { width: 100%; min-height: 44px; margin-top: 12px; border: 0; border-radius: 11px; background: var(--green); color: white; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 12px; font-weight: 850; cursor: pointer; }
+.finish-consultation-button:disabled { opacity: .45; cursor: default; }
 .auto-card { padding: 22px; display: grid; grid-template-columns: auto 1fr auto; gap: 13px; align-items: center; }
 .auto-icon { width: 42px; height: 42px; border-radius: 12px; background: #edf2ce; display: grid; place-items: center; color: var(--green); }
 .auto-card > div:nth-child(2) { display: grid; gap: 4px; }
@@ -460,6 +483,20 @@ h1 em { color: var(--green-2); font-weight: 500; }
 .toggle span { display: block; width: 21px; height: 21px; background: white; border-radius: 50%; box-shadow: 0 2px 6px rgba(0,0,0,.18); transition: transform .2s; }
 .toggle.on { background: var(--green-2); }
 .toggle.on span { transform: translateX(19px); }
+
+.record-modal-backdrop { position: fixed; inset: 0; z-index: 100; padding: 24px; background: rgba(14, 36, 31, .62); display: grid; place-items: center; overflow-y: auto; }
+.record-modal { width: min(900px, 100%); max-height: calc(100vh - 48px); overflow: hidden; border: 1px solid var(--line); border-radius: 22px; background: var(--card); box-shadow: 0 24px 80px rgba(7, 31, 25, .32); padding: 24px; display: grid; grid-template-rows: auto minmax(280px, 1fr) auto auto; gap: 15px; }
+.record-modal-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 22px; }
+.record-modal-heading > div { display: grid; gap: 7px; }
+.record-modal-heading .section-label { display: flex; align-items: center; gap: 7px; }
+.record-modal-heading h2 { margin: 0; font-family: Georgia, serif; font-size: 30px; color: var(--green); }
+.record-modal-heading p { max-width: 700px; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.record-textarea { width: 100%; min-height: 330px; resize: none; border: 1px solid var(--line); border-radius: 14px; background: #fbfbf7; color: var(--ink); padding: 16px; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.record-message { margin: 0; color: var(--danger); font-size: 11px; }
+.record-message.success { color: var(--green-2); }
+.record-actions { display: flex; align-items: center; justify-content: flex-end; gap: 9px; flex-wrap: wrap; }
+.record-actions .primary-button, .record-actions .secondary-button { flex: 0 0 auto; min-height: 42px; }
+.delete-consultation-button { min-height: 42px; padding: 0 14px; border: 1px solid #d9aaa4; border-radius: 11px; background: #fff2ef; color: #8f3932; display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 850; cursor: pointer; }
 
 .training-view { min-height: calc(100vh - 160px); padding: 68px 6px; display: grid; grid-template-columns: .78fr 1.22fr; gap: 70px; align-items: center; }
 .training-intro > p:not(.eyebrow) { max-width: 470px; color: var(--muted); font-size: 16px; line-height: 1.65; margin: 26px 0; }
@@ -567,7 +604,13 @@ footer { width: min(1184px, calc(100% - 48px)); margin: 0 auto; min-height: 74px
   .speaker-detection-card { align-items: stretch; flex-direction: column; }
   .speaker-correction { justify-content: flex-start; }
   .patient-context-box { grid-template-columns: 1fr; }
-  .patient-context-box button { grid-column: 1; grid-row: auto; justify-self: start; padding: 0; }
+  .consultation-turn { grid-template-columns: 50px 1fr; }
+  .consultation-turn time { grid-column: 2; }
+  .record-modal-backdrop { padding: 8px; align-items: stretch; }
+  .record-modal { max-height: calc(100vh - 16px); border-radius: 16px; padding: 17px; grid-template-rows: auto minmax(260px, 1fr) auto auto; }
+  .record-modal-heading h2 { font-size: 25px; }
+  .record-actions { align-items: stretch; flex-direction: column; }
+  .record-actions .primary-button, .record-actions .secondary-button, .delete-consultation-button { width: 100%; justify-content: center; }
   .training-view { padding: 42px 0; gap: 35px; }
   .training-card { padding: 21px 18px; }
   .training-card > textarea { font-size: 23px; }

@@ -106,6 +106,12 @@ test("ships the clinical consultation voice workflow", async () => {
   assert.match(source, /Equipe, colega ou preceptoria/);
   assert.match(source, /prioritizeQuickQuestions/);
   assert.match(source, /Especialidade desta consulta/);
+  assert.match(source, /Falas rápidas priorizadas/);
+  assert.match(source, /Mini-histórico desta consulta/);
+  assert.match(source, /Encerrar consulta e gerar prontuário/);
+  assert.match(source, /Já copiei — apagar histórico/);
+  assert.match(source, /clara-active-consultation-v1/);
+  assert.match(source, /buildClinicalRecord/);
 });
 
 test("ships private free-tier Firebase voice-profile synchronization", async () => {

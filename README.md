@@ -11,8 +11,13 @@ pergunta e a reproduz com voz clara para o paciente.
 - síntese local no navegador, com voz nativa do aparelho como alternativa;
 - modo PWA instalável com telas, perguntas e recursos armazenados para uso offline;
 - transcrição local Whisper em português, sem enviar o áudio para um servidor;
-- pelo menos 100 perguntas rápidas em cada especialidade;
+- pelo menos 100 falas rápidas em cada especialidade, incluindo perguntas,
+  orientações e condutas seguras para discussão com a preceptoria;
 - prioridade dinâmica conforme as respostas ouvidas do paciente;
+- fluxo de Clínica geral que direciona a anamnese conforme a queixa ouvida;
+- mini-histórico local da consulta e remoção automática das falas já utilizadas;
+- prontuário editável gerado ao final, sem inventar dados ausentes;
+- exclusão do histórico liberada somente após copiar e confirmar;
 - separação automática entre usuário, paciente e equipe/preceptoria;
 - reprodução automática somente da fala identificada como sendo do usuário;
 - proteção antieco para ignorar o áudio emitido pelo próprio app;
@@ -208,11 +213,19 @@ Cada gravação gera uma assinatura acústica compacta. Durante a consulta, a
 assinatura da fala atual é comparada com as amostras no dispositivo. As
 correções textuais aprendidas também são reaplicadas automaticamente.
 
-Cada especialidade possui entre 105 e 111 perguntas rápidas. O texto reconhecido
+Cada especialidade possui mais de 100 falas rápidas. O texto reconhecido
 como resposta do paciente ativa regras locais de prioridade: termos como dor,
 febre, falta de ar, sangramento, trauma e medicamentos fazem as perguntas de
 caracterização correspondentes subirem para o início da lista. Falas da equipe
 ficam separadas e não alteram essa ordem.
+
+Durante a consulta, as falas ficam em um mini-histórico somente no dispositivo.
+Uma fala do acadêmico já utilizada sai das próximas sugestões. Ao encerrar, a
+Clara organiza um rascunho de prontuário com identificação, queixa principal,
+HDA, revisão de sistemas, antecedentes, exame, problemas, hipóteses, condutas,
+orientações e cronologia. O texto deve ser revisado antes de ir ao sistema
+oficial. O botão de apagar o histórico só aparece depois da cópia e ainda exige
+confirmação explícita.
 
 Esse método gratuito é personalizado para frases treinadas, mas não é um modelo
 de fala completo permanentemente treinado. Portanto, não é possível garantir
