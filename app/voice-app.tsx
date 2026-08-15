@@ -380,6 +380,7 @@ export function VoiceApp() {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [isSigningIn, setIsSigningIn] = useState(false);
   const [syncStatus, setSyncStatus] = useState<
     "local" | "syncing" | "synced" | "error"
   >("local");
@@ -782,6 +783,7 @@ export function VoiceApp() {
   ) => {
     setError("");
     setAuthError("");
+    setIsSigningIn(true);
     const currentDomain = window.location.hostname;
     const showAuthFailure = (signInError: unknown) => {
       const { code, message, name } = authFailureDetails(signInError);
@@ -806,6 +808,10 @@ export function VoiceApp() {
         setAuthError(
           "Este e-mail já está associado a outro método de login no Firebase.",
         );
+      } else if (name === "AuthFlowTimeout") {
+        setAuthError(
+          "A conta Google foi aberta, mas o aplicativo não recebeu a confirmação do login. Feche outras janelas de login e tente novamente. Se continuar, o retorno OAuth deste domínio ainda precisa ser liberado no Google Cloud.",
+        );
       } else {
         const diagnostic = code
           ? `Código: ${code}.`
@@ -820,7 +826,21 @@ export function VoiceApp() {
     try {
       // Popup is also the safest option on mobile when the app is hosted outside
       // Firebase Hosting, because it does not depend on third-party storage.
-      await signInWithPopup(firebaseAuth, provider);
+      const credential = await Promise.race([
+        signInWithPopup(firebaseAuth, provider),
+        new Promise<never>((_, reject) => {
+          window.setTimeout(() => {
+            const timeoutError = new Error(
+              "A janela do Google fechou sem devolver a sessão ao aplicativo.",
+            );
+            timeoutError.name = "AuthFlowTimeout";
+            reject(timeoutError);
+          }, 25_000);
+        }),
+      ]);
+      setUser(credential.user);
+      setSyncStatus("syncing");
+      setAuthError("");
     } catch (signInError) {
       await Promise.race([
         firebaseAuth.authStateReady(),
@@ -842,6 +862,8 @@ export function VoiceApp() {
           showAuthFailure(redirectError);
         }
       } else showAuthFailure(signInError);
+    } finally {
+      setIsSigningIn(false);
     }
   };
 
@@ -1930,6 +1952,15 @@ export function VoiceApp() {
           ) : null}
           {user ? (
             <>
+              <div className="account-profile" title={user.email ?? "Conta Google conectada"}>
+                <span className="account-avatar" aria-hidden="true">
+                  {(user.displayName || user.email || "C").trim().charAt(0).toUpperCase()}
+                </span>
+                <span className="account-identity">
+                  <strong>{user.displayName || "Conta Google"}</strong>
+                  <small>{user.email || "Perfil conectado"}</small>
+                </span>
+              </div>
               <div className={`sync-badge ${syncStatus}`} title={user.email ?? "Conta conectada"}>
                 {syncStatus === "syncing" ? <RefreshCw size={15} /> : <Cloud size={15} />}
                 <span>
@@ -1949,15 +1980,16 @@ export function VoiceApp() {
               <button
                 className="account-button"
                 onClick={() => handleSignIn(googleAuthProvider, "Google")}
-                disabled={!authReady}
+                disabled={!authReady || isSigningIn}
               >
-                <LogIn size={16} /> {authReady ? "Entrar com Google" : "Carregando…"}
+                {isSigningIn ? <RefreshCw size={16} /> : <LogIn size={16} />}
+                {isSigningIn ? "Entrando…" : authReady ? "Entrar com Google" : "Carregando…"}
               </button>
               {appleSignInEnabled ? (
                 <button
                   className="account-button apple"
                   onClick={() => handleSignIn(appleAuthProvider, "Apple")}
-                  disabled={!authReady}
+                  disabled={!authReady || isSigningIn}
                 >
                   <LogIn size={16} /> Entrar com Apple
                 </button>

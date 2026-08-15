@@ -142,6 +142,12 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visi
 
 .account-button.subtle { background: transparent; border-color: var(--line); }
 .account-button:disabled { opacity: .55; cursor: wait; }
+.account-profile { min-width: 0; display: inline-flex; align-items: center; gap: 8px; padding: 4px 9px 4px 5px; border: 1px solid var(--line); border-radius: 999px; background: white; }
+.account-avatar { width: 29px; height: 29px; flex: 0 0 29px; display: grid; place-items: center; border-radius: 50%; background: var(--green); color: white; font-size: 12px; font-weight: 900; }
+.account-identity { min-width: 0; max-width: 190px; display: grid; line-height: 1.12; }
+.account-identity strong, .account-identity small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-identity strong { color: var(--ink); font-size: 11px; }
+.account-identity small { color: var(--muted); font-size: 9px; }
 .auth-error { flex-basis: 100%; max-width: 460px; padding: 7px 10px; border: 1px solid #edbbb4; border-radius: 9px; background: #fff0ec; color: var(--danger); font-size: 10px; font-weight: 750; line-height: 1.35; }
 .sync-badge { color: var(--green-2); background: rgba(223, 242, 232, .68); }
 .sync-badge.syncing svg { animation: spin 1.2s linear infinite; }
@@ -584,6 +590,7 @@ footer { width: min(1184px, calc(100% - 48px)); margin: 0 auto; min-height: 74px
   .mode-switch { width: 100%; }
   .mode-switch button { flex: 1; justify-content: center; padding: 10px 9px; font-size: 12px; }
   .account-area { width: 100%; }
+  .account-profile { flex: 1 1 100%; justify-content: center; }
   .auth-error { max-width: none; }
   .signin-buttons { width: 100%; display: grid; grid-template-columns: 1fr; }
   .signin-buttons .account-button { width: 100%; }

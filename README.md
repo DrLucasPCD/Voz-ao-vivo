@@ -168,20 +168,26 @@ em vez de gerar cobrança. O app continua guardando as amostras localmente.
 O Analytics não é inicializado neste app, para evitar telemetria desnecessária
 em um fluxo com dados de voz potencialmente sensíveis.
 
-### Login no celular com Google
+### Login no celular e computador com Google
 
-No celular, o app usa diretamente o redirecionamento recomendado pelo Firebase.
-Em computadores, tenta primeiro o popup e usa redirecionamento se o navegador o
-bloquear. O `netlify.toml` já encaminha `/__/auth/*` ao Firebase para permitir o
-fluxo no mesmo domínio.
+O app usa popup em celular e computador e recorre ao redirecionamento apenas
+quando o navegador bloquear essa janela. O domínio de autenticação é o mesmo da
+aplicação (`voz-ao-vivo.netlify.app`) para evitar o bloqueio de armazenamento
+entre domínios. O `netlify.toml` encaminha `/__/auth/*` de forma transparente ao
+Firebase.
 
-O popup funciona com o `authDomain` padrão do Firebase e não requer configuração
-adicional no Netlify. Se quiser ativar o redirecionamento no mesmo domínio, crie
-no Netlify a variável `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` com apenas o domínio do
-site. Adicione esse domínio aos domínios autorizados do Firebase e registre
-`https://SEU-DOMINIO/__/auth/handler` como URI autorizada no cliente OAuth do
-Google. Essa configuração adicional evita limitações de armazenamento de
-terceiros em alguns navegadores móveis.
+Além de autorizar `voz-ao-vivo.netlify.app` em **Firebase Authentication →
+Settings → Authorized domains**, registre a seguinte URI no cliente OAuth 2.0
+Web do projeto, em **Google Cloud → APIs e serviços → Credenciais**:
+
+```text
+https://voz-ao-vivo.netlify.app/__/auth/handler
+```
+
+Sem essa URI exata, o Google responde `redirect_uri_mismatch` e não devolve a
+sessão ao aplicativo. A variável `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` pode alterar
+o domínio em outro ambiente, mas o novo domínio também precisará do proxy, da
+autorização no Firebase e da URI `/__/auth/handler` no cliente OAuth.
 
 ### Ativar login com Apple
 

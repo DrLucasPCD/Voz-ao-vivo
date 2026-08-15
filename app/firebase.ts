@@ -6,7 +6,7 @@ const firebaseConfig = {
   apiKey: "AIzaSyD1_C9GQjcDCP25B1Bn_tpPWBpHx55LUCo",
   authDomain:
     process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ??
-    "voz-ao-vivo.firebaseapp.com",
+    "voz-ao-vivo.netlify.app",
   projectId: "voz-ao-vivo",
   storageBucket: "voz-ao-vivo.firebasestorage.app",
   messagingSenderId: "970055294205",

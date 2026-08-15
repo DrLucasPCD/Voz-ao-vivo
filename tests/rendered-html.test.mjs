@@ -135,6 +135,7 @@ test("ships private free-tier Firebase voice-profile synchronization", async () 
   assert.match(firebaseSource, /OAuthProvider\("apple\.com"\)/);
   assert.match(firebaseSource, /NEXT_PUBLIC_ENABLE_APPLE_SIGN_IN/);
   assert.match(firebaseSource, /projectId: "voz-ao-vivo"/);
+  assert.match(firebaseSource, /"voz-ao-vivo\.netlify\.app"/);
   assert.match(source, /Entrar com Google/);
   assert.match(source, /auth\/unauthorized-domain/);
   assert.match(source, /Authorized domains/);
@@ -143,6 +144,8 @@ test("ships private free-tier Firebase voice-profile synchronization", async () 
   assert.match(source, /signInWithPopup/);
   assert.match(source, /authStateReady/);
   assert.match(source, /authFailureDetails/);
+  assert.match(source, /AuthFlowTimeout/);
+  assert.match(source, /account-profile/);
   assert.match(source, /syncTrainingSample/);
   assert.match(cloudSource, /uploadVoiceSample/);
   assert.match(cloudSource, /subscribeToVoiceSamples/);
