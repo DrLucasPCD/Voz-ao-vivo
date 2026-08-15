@@ -11,6 +11,7 @@ import {
   Download,
   FileAudio,
   Headphones,
+  HardDriveDownload,
   LogIn,
   LogOut,
   Mic,
@@ -22,6 +23,7 @@ import {
   Trash2,
   Volume2,
   WandSparkles,
+  WifiOff,
 } from "lucide-react";
 import { strToU8, zipSync } from "fflate";
 import {
@@ -72,6 +74,18 @@ import {
   synthesizeWithPiper,
   type PiperProgress,
 } from "./piper-voice";
+import {
+  isLocalTranscriptionPrepared,
+  LOCAL_TRANSCRIPTION_DOWNLOAD_MB,
+  prepareLocalTranscription,
+  transcribeLocally,
+  type LocalTranscriptionProgress,
+} from "./local-transcription";
+import {
+  cacheAppForOffline,
+  isOfflineShellPrepared,
+  registerOfflineServiceWorker,
+} from "./offline-support";
 
 type RecognitionAlternative = { transcript: string; confidence: number };
 
@@ -345,6 +359,14 @@ export function VoiceApp() {
   >("idle");
   const [piperDownloadPercent, setPiperDownloadPercent] = useState(0);
   const [piperError, setPiperError] = useState("");
+  const [isOnline, setIsOnline] = useState(true);
+  const [localTranscriptionReady, setLocalTranscriptionReady] = useState(false);
+  const [offlineStatus, setOfflineStatus] = useState<
+    "idle" | "preparing" | "ready" | "error"
+  >("idle");
+  const [offlinePhase, setOfflinePhase] = useState("Preparação não iniciada");
+  const [offlineProgress, setOfflineProgress] = useState(0);
+  const [offlineError, setOfflineError] = useState("");
   const [patientTurns, setPatientTurns] = useState<string[]>([]);
   const [teamTurns, setTeamTurns] = useState<string[]>([]);
   const [lastDetectedSpeaker, setLastDetectedSpeaker] = useState<
@@ -353,7 +375,7 @@ export function VoiceApp() {
   const [lastDetectedText, setLastDetectedText] = useState("");
   const [showAllQuickQuestions, setShowAllQuickQuestions] = useState(false);
   const [transcriptionSource, setTranscriptionSource] = useState<
-    "browser" | "voice-profile"
+    "browser" | "voice-profile" | "local-whisper"
   >("browser");
   const [corrections, setCorrections] = useState<Correction[]>([]);
   const [correctionSaved, setCorrectionSaved] = useState(false);
@@ -405,9 +427,30 @@ export function VoiceApp() {
   }, []);
 
   useEffect(() => {
-    void isPiperVoiceCached().then((cached) => {
-      if (cached) setPiperStatus("ready");
+    const transcriptionPrepared = isLocalTranscriptionPrepared();
+    const shellPrepared = isOfflineShellPrepared();
+    window.setTimeout(() => {
+      setIsOnline(navigator.onLine);
+      setLocalTranscriptionReady(transcriptionPrepared);
+    }, 0);
+    void isPiperVoiceCached().then((piperPrepared) => {
+      if (piperPrepared) setPiperStatus("ready");
+      if (transcriptionPrepared && shellPrepared && piperPrepared) {
+        setOfflineStatus("ready");
+        setOfflineProgress(100);
+        setOfflinePhase("App e reconhecimento disponíveis sem internet");
+      }
     });
+
+    void registerOfflineServiceWorker().catch(() => undefined);
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
   }, []);
 
   useEffect(() => {
@@ -809,6 +852,81 @@ export function VoiceApp() {
     }
   };
 
+  const updateOfflineTranscriptionProgress = (
+    progress: LocalTranscriptionProgress,
+  ) => {
+    if (progress.phase === "transcribing") {
+      setOfflinePhase("Reconhecendo a fala localmente…");
+      return;
+    }
+    if (progress.phase === "download") {
+      setOfflinePhase("Baixando o reconhecimento Whisper para este aparelho…");
+      if (typeof progress.percent === "number") {
+        const percent = progress.percent;
+        setOfflineProgress((current) =>
+          Math.max(current, 5 + Math.round(percent * 0.5)),
+        );
+      }
+      return;
+    }
+    setOfflineProgress((current) => Math.max(current, 55));
+  };
+
+  const prepareCompleteOfflineMode = async () => {
+    if (!navigator.onLine) {
+      setOfflineStatus("error");
+      setOfflineError(
+        "Conecte-se à internet somente para a preparação inicial deste aparelho.",
+      );
+      return;
+    }
+
+    setOfflineStatus("preparing");
+    setOfflineProgress(2);
+    setOfflineError("");
+    setOfflinePhase("Salvando as telas e perguntas no aparelho…");
+    try {
+      await cacheAppForOffline();
+      setOfflineProgress(5);
+
+      await prepareLocalTranscription(updateOfflineTranscriptionProgress);
+      setLocalTranscriptionReady(true);
+      setOfflineProgress((current) => Math.max(current, 55));
+
+      setOfflinePhase("Baixando a voz Piper Faber para este aparelho…");
+      await preparePiperVoice((progress) => {
+        updatePiperProgress(progress);
+        if (progress.phase === "download") {
+          const isModel = progress.file?.endsWith(".onnx");
+          if (isModel && progress.total) {
+            setOfflineProgress((current) =>
+              Math.max(
+                current,
+                55 + Math.round((progress.loaded / progress.total) * 44),
+              ),
+            );
+          }
+        }
+      });
+
+      setPiperStatus("ready");
+      setPiperDownloadPercent(100);
+      setOfflineProgress(100);
+      setOfflineStatus("ready");
+      setOfflinePhase("Tudo pronto para funcionar sem internet");
+      localStorage.setItem("clara-offline-ready", "true");
+      setMessage("Modo offline completo preparado neste dispositivo");
+    } catch (preparationError) {
+      setOfflineStatus("error");
+      setOfflineError(
+        preparationError instanceof Error
+          ? preparationError.message
+          : "Não consegui concluir a preparação offline",
+      );
+      setOfflinePhase("Preparação interrompida; toque para tentar novamente");
+    }
+  };
+
   const stopSpeaking = () => {
     speechRequestRef.current += 1;
     try {
@@ -832,10 +950,20 @@ export function VoiceApp() {
     pendingCorrectionDurationMsRef.current = 0;
     setIsPreparingCorrectionAudio(false);
     const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
-    if (!Recognition) {
+    const useLocalRecognition = localTranscriptionReady;
+    if (!navigator.onLine && !useLocalRecognition) {
+      setError(
+        "O reconhecimento offline ainda não foi preparado neste aparelho. Conecte-se e toque em Preparar uso offline.",
+      );
+      return;
+    }
+    if (!Recognition && !useLocalRecognition) {
       setError("O reconhecimento de voz ainda não funciona neste navegador. Abra o app no Chrome ou Edge.");
       return;
     }
+
+    latestFinalRef.current = "";
+    latestContextualFinalRef.current = "";
 
     window.speechSynthesis?.cancel();
     try {
@@ -874,7 +1002,33 @@ export function VoiceApp() {
             // Sem assinatura válida, o turno permanece como fala do usuário.
           }
 
-          const topTranscript = latestFinalRef.current.trim();
+          let topTranscript = latestFinalRef.current.trim();
+          let contextualTranscript = latestContextualFinalRef.current.trim();
+          let usedLocalTranscription = false;
+
+          if (localTranscriptionReady) {
+            setMessage("Transcrevendo no próprio aparelho…");
+            try {
+              const localText = await transcribeLocally(
+                recordedAudio,
+                updateOfflineTranscriptionProgress,
+              );
+              if (localText) {
+                topTranscript = localText;
+                contextualTranscript = localText;
+                usedLocalTranscription = true;
+              }
+            } catch (localError) {
+              if (!navigator.onLine || !topTranscript) {
+                setError(
+                  localError instanceof Error
+                    ? `Reconhecimento local: ${localError.message}`
+                    : "Não consegui reconhecer a fala localmente",
+                );
+              }
+            }
+          }
+
           const looksLikeAppEcho =
             topTranscript &&
             Date.now() - synthesisEndedAtRef.current < 3500 &&
@@ -916,13 +1070,13 @@ export function VoiceApp() {
 
           setLastDetectedSpeaker("doctor");
           setLastDetectedText(
-            latestContextualFinalRef.current.trim() || topTranscript,
+            contextualTranscript || topTranscript,
           );
           setPendingCorrectionAudio(recordedAudio);
           pendingCorrectionDurationMsRef.current = durationMs;
 
           let recognizedText =
-            latestContextualFinalRef.current.trim() || topTranscript;
+            contextualTranscript || topTranscript;
           let finalText = recognizedText
             ? applyLearnedCorrection(
                 recognizedText,
@@ -964,12 +1118,20 @@ export function VoiceApp() {
             latestFinalRef.current = recognizedText;
             setRawTranscript(recognizedText);
             setTranscript(finalText);
-            setTranscriptionSource(usedVoiceProfile ? "voice-profile" : "browser");
+            setTranscriptionSource(
+              usedVoiceProfile
+                ? "voice-profile"
+                : usedLocalTranscription
+                  ? "local-whisper"
+                  : "browser",
+            );
             setError("");
             setMessage(
               usedVoiceProfile
                 ? "Frase reconhecida pelo seu perfil de voz local"
-                : "Frase reconhecida gratuitamente",
+                : usedLocalTranscription
+                  ? "Frase reconhecida pelo Whisper no aparelho"
+                  : "Frase reconhecida gratuitamente",
             );
             if (autoSpeakRef.current) speak(finalText, true);
           } else {
@@ -987,14 +1149,25 @@ export function VoiceApp() {
       return;
     }
 
+    if (useLocalRecognition) {
+      recognitionRef.current = null;
+      setIsListening(true);
+      setMessage("Ouvindo localmente; toque novamente quando terminar…");
+      return;
+    }
+
+    if (!Recognition) {
+      if (conversationRecorderRef.current?.state === "recording") {
+        conversationRecorderRef.current.stop();
+      }
+      setError("O reconhecimento deste navegador não pôde ser iniciado.");
+      return;
+    }
     const recognition = new Recognition();
     recognition.lang = "pt-BR";
     recognition.continuous = false;
     recognition.interimResults = true;
     recognition.maxAlternatives = 5;
-    latestFinalRef.current = "";
-    latestContextualFinalRef.current = "";
-
     recognition.onresult = (event) => {
       let topFinalText = "";
       let contextualFinalText = "";
@@ -1035,6 +1208,7 @@ export function VoiceApp() {
     };
 
     recognition.onend = () => {
+      recognitionRef.current = null;
       setIsListening(false);
       setInterimTranscript("");
       setMessage(
@@ -1387,6 +1561,12 @@ export function VoiceApp() {
           </button>
         </nav>
         <div className="account-area">
+          {!isOnline ? (
+            <div className="sync-badge offline" title="Sem conexão com a internet">
+              <WifiOff size={15} />
+              <span>Modo offline</span>
+            </div>
+          ) : null}
           {user ? (
             <>
               <div className={`sync-badge ${syncStatus}`} title={user.email ?? "Conta conectada"}>
@@ -1490,7 +1670,9 @@ export function VoiceApp() {
                       <span className={`transcription-source ${transcriptionSource}`}>
                         {transcriptionSource === "voice-profile"
                           ? "Perfil de voz local e gratuito"
-                          : "Reconhecimento gratuito do navegador"}
+                          : transcriptionSource === "local-whisper"
+                            ? "Whisper local — áudio não saiu do aparelho"
+                            : "Reconhecimento gratuito do navegador"}
                       </span>
                     )}
                   </div>
@@ -1568,8 +1750,8 @@ export function VoiceApp() {
               <div>
                 <strong>Reconhecimento personalizado gratuito</strong>
                 <span>
-                  O navegador reconhece a fala e a Clara compara o ritmo e as
-                  frequências com suas amostras treinadas, sem API paga.
+                  O Whisper reconhece a fala no próprio aparelho e a Clara compara
+                  ritmo e frequências com suas amostras, sem API paga.
                 </span>
                 <small>
                   {localVoiceTemplateCount
@@ -1579,6 +1761,59 @@ export function VoiceApp() {
                 </small>
               </div>
               <span className="free-badge">R$ 0</span>
+            </article>
+
+            <article className={`offline-card ${offlineStatus}`} aria-live="polite">
+              <div className="offline-icon">
+                {offlineStatus === "ready" ? <Check size={23} /> : <HardDriveDownload size={23} />}
+              </div>
+              <div className="offline-copy">
+                <div className="offline-heading">
+                  <strong>Uso completo sem internet</strong>
+                  <span className={`offline-status ${offlineStatus}`}>
+                    {offlineStatus === "preparing"
+                      ? "Preparando neste aparelho"
+                      : offlineStatus === "ready"
+                        ? "Pronto para modo avião"
+                        : offlineStatus === "error"
+                          ? "Preparação incompleta"
+                          : "Preparação necessária"}
+                  </span>
+                </div>
+                <span>{offlinePhase}</span>
+                <small>
+                  Salva o app, as perguntas, o Whisper e o Piper Faber neste
+                  navegador. O primeiro preparo transfere cerca de {LOCAL_TRANSCRIPTION_DOWNLOAD_MB + PIPER_FIRST_USE_DOWNLOAD_MB} MB;
+                  depois, microfone, reconhecimento e voz funcionam sem conexão.
+                  Firebase apenas sincroniza novamente quando a internet voltar.
+                </small>
+                {offlineStatus === "preparing" ? (
+                  <div
+                    className="offline-progress"
+                    role="progressbar"
+                    aria-label="Preparação para uso offline"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={offlineProgress}
+                  >
+                    <span style={{ width: `${offlineProgress}%` }} />
+                  </div>
+                ) : null}
+                {offlineError ? <small className="offline-error">{offlineError}</small> : null}
+              </div>
+              <button
+                className="offline-download-button"
+                onClick={prepareCompleteOfflineMode}
+                disabled={offlineStatus === "preparing"}
+              >
+                {offlineStatus === "ready" ? (
+                  <><Check size={17} /> Verificar arquivos</>
+                ) : offlineStatus === "preparing" ? (
+                  <><RefreshCw size={17} /> Preparando…</>
+                ) : (
+                  <><Download size={17} /> Preparar uso offline</>
+                )}
+              </button>
             </article>
 
             <article className="piper-voice-card" aria-live="polite">
@@ -1601,8 +1836,8 @@ export function VoiceApp() {
                   </span>
                 </div>
                 <span>
-                  Modelo Piper executado localmente. Depois do primeiro download,
-                  o texto da consulta não é enviado para um serviço de síntese.
+                  O modelo Piper é baixado e executado localmente neste dispositivo.
+                  Depois do primeiro download, funciona até em modo avião.
                 </span>
                 <small>
                   O modelo tem aproximadamente {PIPER_MODEL_SIZE_MB} MB e fica no

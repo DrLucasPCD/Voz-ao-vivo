@@ -9,6 +9,8 @@ pergunta e a reproduz com voz clara para o paciente.
 - reconhecimento de fala em português do Brasil;
 - reprodução da pergunta com a voz neural Piper Faber em português do Brasil;
 - síntese local no navegador, com voz nativa do aparelho como alternativa;
+- modo PWA instalável com telas, perguntas e recursos armazenados para uso offline;
+- transcrição local Whisper em português, sem enviar o áudio para um servidor;
 - pelo menos 100 perguntas rápidas em cada especialidade;
 - prioridade dinâmica conforme as respostas ouvidas do paciente;
 - separação automática entre usuário, paciente e equipe/preceptoria;
@@ -43,6 +45,25 @@ npm run dev
 
 Abra `http://localhost:3000` no Chrome ou Edge e permita o acesso ao microfone.
 
+## Preparar para uso sem internet
+
+Abra o app conectado à internet e toque uma vez em **Preparar uso offline**. A
+Clara salva no dispositivo:
+
+- as telas, perguntas clínicas e a lógica de identificação de falantes;
+- o Whisper Tiny quantizado, usado para transcrever a fala localmente;
+- o modelo Piper Faber e todos os componentes WASM necessários para gerar voz.
+
+A preparação inicial transfere cerca de 150 MB e precisa ser repetida em cada
+celular ou computador novo. Depois de concluída, o microfone, a transcrição, a
+identificação de falantes, as perguntas rápidas e a reprodução Piper funcionam
+em modo avião. As gravações e correções continuam no IndexedDB local; se houver
+login, o Firebase apenas retoma a sincronização quando a conexão voltar.
+
+No celular, também é possível instalar a Clara pela opção **Adicionar à tela
+inicial** do navegador. O service worker mantém o aplicativo disponível mesmo
+depois de fechar e abrir novamente sem conexão.
+
 ## Verificação
 
 ```bash
@@ -62,13 +83,19 @@ O projeto usa Next.js e inclui o arquivo `netlify.toml`. No Netlify:
 O Netlify detecta o Next.js automaticamente. Não é necessário fixar uma versão
 do adaptador do Netlify.
 
-### Reconhecimento sem cobrança
+### Reconhecimento local sem cobrança
 
-O app não usa OpenAI nem outra API paga. A primeira transcrição vem do recurso
-de voz do navegador. Em seguida, a Clara compara localmente ritmo, duração,
-energia e faixas de frequência com as frases treinadas. Para reduzir falsos
-positivos, a comparação acústica só substitui o resultado quando também existe
-apoio do texto reconhecido ou duas gravações da mesma frase.
+O app não usa OpenAI nem outra API paga. Depois da preparação offline, a
+transcrição usa o modelo multilíngue `onnx-community/whisper-tiny`, quantizado e
+executado via WebAssembly no navegador. Em seguida, a Clara compara localmente
+ritmo, duração, energia e faixas de frequência com as frases treinadas. Para
+reduzir falsos positivos, a comparação acústica só substitui o resultado quando
+também existe apoio do texto reconhecido ou duas gravações da mesma frase.
+
+Antes dessa preparação, e somente quando houver internet, Chrome ou Edge ainda
+podem usar o reconhecimento padrão do navegador como alternativa. Sem internet,
+a Clara nunca tenta esse serviço remoto: exige o Whisper já armazenado no
+aparelho e orienta o usuário se o preparo ainda não tiver sido feito.
 
 Grave cada pergunta importante pelo menos duas vezes. A comparação acústica
 funciona melhor para frases treinadas; fala livre ainda depende da qualidade do
@@ -94,11 +121,13 @@ uma voz masculina brasileira em ONNX, com amostragem de 22,05 kHz. O modelo tem
 aproximadamente 63 MB; considerando ONNX Runtime, fonemizador e recursos WASM,
 a primeira preparação pode transferir cerca de 95 MB.
 
-O download só começa quando o usuário toca em **Baixar voz** ou pede a primeira
-reprodução. Os arquivos ficam no armazenamento privado do navegador e são
-reaproveitados nas próximas consultas no mesmo dispositivo. A geração acontece
-em um Web Worker para não travar a interface. Depois que os componentes estão
-armazenados, o texto sintetizado não é enviado a um serviço remoto de voz.
+O download começa quando o usuário toca em **Preparar uso offline**, em **Baixar
+voz** ou pede a primeira reprodução. O modelo fica no armazenamento privado
+OPFS do navegador e é reaproveitado nas próximas consultas no mesmo dispositivo.
+Os componentes ONNX e do fonemizador são servidos pelo próprio app e guardados
+no cache offline, sem depender de uma CDN. A geração acontece em um Web Worker
+para não travar a interface. Depois que os componentes estão armazenados, o
+texto sintetizado não é enviado a um serviço remoto de voz.
 
 Se o navegador não oferecer armazenamento privado, WebAssembly suficiente ou
 memória para o modelo, a Clara muda automaticamente para a voz em português do

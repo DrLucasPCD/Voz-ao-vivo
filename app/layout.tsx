@@ -15,6 +15,13 @@ export async function generateMetadata(): Promise<Metadata> {
     title: "Clara — sua voz, mais clara",
     description:
       "Comunicação assistida para conduzir consultas médicas com perguntas claras.",
+    manifest: "/manifest.webmanifest",
+    icons: { icon: "/app-icon.svg", apple: "/app-icon.svg" },
+    appleWebApp: {
+      capable: true,
+      statusBarStyle: "default",
+      title: "Clara",
+    },
     openGraph: {
       title: "Clara — sua voz, mais clara",
       description: "Faça suas perguntas ao paciente. A Clara escuta, aprende e reproduz sua fala com clareza.",
@@ -37,7 +44,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="pt-BR">
+    <html lang="pt-BR" data-theme-color="#164b41">
       <body>{children}</body>
     </html>
   );

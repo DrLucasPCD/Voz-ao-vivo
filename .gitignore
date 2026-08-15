@@ -42,6 +42,8 @@ ui-debug.log*
 
 /dist/
 /public/piper-voice.worker.js
+/public/local-transcription.worker.js
+/public/offline-assets/
 /.wrangler/
 /outputs/
 /work/

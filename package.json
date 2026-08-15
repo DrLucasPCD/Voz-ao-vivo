@@ -11,7 +11,7 @@
     "build": "npm run build:piper-worker && next build",
     "start": "next start",
     "test": "npm run build && node --experimental-strip-types --test tests/*.test.mjs",
-    "lint": "eslint . --ignore-pattern .next --ignore-pattern public/piper-voice.worker.js"
+    "lint": "eslint . --ignore-pattern .next --ignore-pattern public/piper-voice.worker.js --ignore-pattern public/local-transcription.worker.js --ignore-pattern public/offline-assets"
   },
   "dependencies": {
     "@mintplex-labs/piper-tts-web": "^1.0.4",
@@ -24,7 +24,9 @@
     "react-dom": "19.2.6"
   },
   "devDependencies": {
+    "@diffusionstudio/piper-wasm": "^1.0.0",
     "@eslint/js": "9.39.4",
+    "@huggingface/transformers": "^3.8.1",
     "@next/eslint-plugin-next": "^16.3.1",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",

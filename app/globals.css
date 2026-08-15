@@ -143,6 +143,7 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visi
 .sync-badge { color: var(--green-2); background: rgba(223, 242, 232, .68); }
 .sync-badge.syncing svg { animation: spin 1.2s linear infinite; }
 .sync-badge.error { color: var(--danger); background: #fff0ec; }
+.sync-badge.offline { color: #765d1f; background: #fff1ce; }
 
 @keyframes spin {
   to { transform: rotate(360deg); }
@@ -304,6 +305,7 @@ h1 em { color: var(--green-2); font-weight: 500; }
 .section-hint { color: var(--muted); font-size: 12px; }
 .transcription-source { width: fit-content; margin-top: 4px; padding: 4px 7px; border-radius: 999px; background: #eeeee7; color: var(--muted); font-size: 10px; font-weight: 800; }
 .transcription-source.voice-profile { background: var(--mint); color: var(--green-2); }
+.transcription-source.local-whisper { background: #e7eef9; color: #294f7a; }
 .icon-button { width: 38px; height: 38px; border: 1px solid var(--line); border-radius: 11px; background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
 .transcript-wrap { flex: 1; min-height: 190px; position: relative; margin-top: 16px; }
 .transcript-wrap textarea {
@@ -377,6 +379,36 @@ h1 em { color: var(--green-2); font-weight: 500; }
 .free-recognition-card small { color: #587269; font-size: 10px; line-height: 1.4; }
 .free-recognition-card .free-badge { padding: 6px 9px; border-radius: 999px; background: var(--green); color: white; font-size: 11px; font-weight: 900; white-space: nowrap; }
 .toggle:disabled { opacity: .45; cursor: not-allowed; }
+
+.offline-card {
+  margin-top: 18px;
+  padding: 19px 20px;
+  border: 1px solid #91b8d2;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #f4f9ff, #f4fbf7);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 14px;
+}
+.offline-card.ready { border-color: #75ad98; background: linear-gradient(135deg, #f4fff8, #f8fbef); }
+.offline-card.error { border-color: #d7a39c; background: #fff9f7; }
+.offline-icon { width: 44px; height: 44px; border-radius: 13px; display: grid; place-items: center; background: #e2eef7; color: #295d7f; }
+.offline-card.ready .offline-icon { background: var(--mint); color: var(--green); }
+.offline-copy { min-width: 0; display: grid; gap: 5px; }
+.offline-heading { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.offline-heading strong { font-size: 13px; }
+.offline-copy > span { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.offline-copy > small { color: #536874; font-size: 10px; line-height: 1.4; }
+.offline-status { padding: 4px 7px; border-radius: 999px; background: #e2eef7; color: #295d7f; font-size: 9px; font-weight: 900; }
+.offline-status.ready { background: var(--mint); color: var(--green); }
+.offline-status.preparing { background: #fff1ce; color: #765d1f; }
+.offline-status.error { background: #f5e5e3; color: #8b4038; }
+.offline-progress { width: min(380px, 100%); height: 7px; overflow: hidden; border-radius: 999px; background: #dfe8ee; }
+.offline-progress span { display: block; min-width: 3px; height: 100%; border-radius: inherit; background: #3c7597; transition: width .2s ease; }
+.offline-error { color: #9d4037 !important; }
+.offline-download-button { min-height: 40px; padding: 0 13px; border: 1px solid #8aafc7; border-radius: 11px; background: white; color: #295d7f; display: inline-flex; align-items: center; justify-content: center; gap: 7px; font-size: 10px; font-weight: 900; cursor: pointer; white-space: nowrap; }
+.offline-download-button:disabled { opacity: .68; cursor: default; }
 
 .piper-voice-card {
   margin-top: 18px;
@@ -525,6 +557,8 @@ footer { width: min(1184px, calc(100% - 48px)); margin: 0 auto; min-height: 74px
   .message-actions { flex-direction: column; }
   .free-recognition-card { grid-template-columns: auto 1fr; align-items: start; }
   .free-recognition-card > .free-badge { grid-column: 2; justify-self: start; }
+  .offline-card { grid-template-columns: auto 1fr; align-items: start; }
+  .offline-download-button { grid-column: 2; justify-self: start; }
   .piper-voice-card { grid-template-columns: auto 1fr; align-items: start; }
   .piper-download-button { grid-column: 2; justify-self: start; }
   .primary-button, .secondary-button { width: 100%; flex: none; }

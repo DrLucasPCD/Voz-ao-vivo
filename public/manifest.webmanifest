@@ -1,0 +1,19 @@
+{
+  "name": "Clara — Voz assistida",
+  "short_name": "Clara",
+  "description": "Comunicação assistida local para consultas médicas.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f7f7f0",
+  "theme_color": "#164b41",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

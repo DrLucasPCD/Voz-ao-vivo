@@ -122,7 +122,14 @@ async function getSession(id: string) {
         // O runtime também limita as threads quando SharedArrayBuffer não existe.
       }
     }
-    sessionPromise = TtsSession.create({ voiceId: VOICE_ID });
+    sessionPromise = TtsSession.create({
+      voiceId: VOICE_ID,
+      wasmPaths: {
+        onnxWasm: "/offline-assets/piper-onnx/",
+        piperData: "/offline-assets/piper/piper_phonemize.data",
+        piperWasm: "/offline-assets/piper/piper_phonemize.wasm",
+      },
+    });
   }
   return sessionPromise;
 }

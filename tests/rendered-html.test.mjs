@@ -15,7 +15,34 @@ test("is configured as a standard Next.js app for Netlify", async () => {
   assert.doesNotMatch(packageJson, /vinext|wrangler|cloudflare/);
   assert.match(netlifyConfig, /command = "npm run build"/);
   assert.match(netlifyConfig, /publish = "\.next"/);
-  assert.match(netlifyConfig, /Permissions-Policy = "microphone=\(self\)"/);
+  assert.match(
+    netlifyConfig,
+    /Permissions-Policy = "microphone=\(self\), on-device-speech-recognition=\(self\)"/,
+  );
+});
+
+test("ships a complete installable offline mode", async () => {
+  const [source, transcription, worker, offlineSupport, serviceWorker, manifest] =
+    await Promise.all([
+      readFile(new URL("app/voice-app.tsx", root), "utf8"),
+      readFile(new URL("app/local-transcription.ts", root), "utf8"),
+      readFile(new URL("app/local-transcription.worker.ts", root), "utf8"),
+      readFile(new URL("app/offline-support.ts", root), "utf8"),
+      readFile(new URL("public/sw.js", root), "utf8"),
+      readFile(new URL("public/manifest.webmanifest", root), "utf8"),
+    ]);
+
+  assert.match(source, /Preparar uso offline/);
+  assert.match(source, /transcribeLocally/);
+  assert.match(transcription, /local-transcription\.worker\.js/);
+  assert.match(worker, /onnx-community\/whisper-tiny/);
+  assert.match(worker, /language: "portuguese"/);
+  assert.match(worker, /ort-wasm-simd-threaded\.jsep\.mjs/);
+  assert.match(worker, /ort-wasm-simd-threaded\.jsep\.wasm/);
+  assert.match(offlineSupport, /serviceWorker\.register\("\/sw\.js"/);
+  assert.match(serviceWorker, /CACHE_URLS/);
+  assert.match(serviceWorker, /request\.mode === "navigate"/);
+  assert.match(manifest, /"display": "standalone"/);
 });
 
 test("ships the local Piper Faber Brazilian voice", async () => {
@@ -33,6 +60,8 @@ test("ships the local Piper Faber Brazilian voice", async () => {
   assert.match(piperWorker, /Trelis\/piper-pt-br-faber-medium/);
   assert.match(piperWorker, /TtsSession\.create/);
   assert.match(piperWorker, /navigator\.storage\.getDirectory/);
+  assert.match(piperWorker, /offline-assets\/piper-onnx/);
+  assert.match(piperWorker, /offline-assets\/piper\/piper_phonemize/);
   assert.match(packageJson, /@mintplex-labs\/piper-tts-web/);
 });
 
