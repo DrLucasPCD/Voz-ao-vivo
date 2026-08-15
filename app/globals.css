@@ -103,6 +103,8 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visi
   justify-self: end;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -140,6 +142,7 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visi
 
 .account-button.subtle { background: transparent; border-color: var(--line); }
 .account-button:disabled { opacity: .55; cursor: wait; }
+.auth-error { flex-basis: 100%; max-width: 460px; padding: 7px 10px; border: 1px solid #edbbb4; border-radius: 9px; background: #fff0ec; color: var(--danger); font-size: 10px; font-weight: 750; line-height: 1.35; }
 .sync-badge { color: var(--green-2); background: rgba(223, 242, 232, .68); }
 .sync-badge.syncing svg { animation: spin 1.2s linear infinite; }
 .sync-badge.error { color: var(--danger); background: #fff0ec; }
@@ -581,6 +584,7 @@ footer { width: min(1184px, calc(100% - 48px)); margin: 0 auto; min-height: 74px
   .mode-switch { width: 100%; }
   .mode-switch button { flex: 1; justify-content: center; padding: 10px 9px; font-size: 12px; }
   .account-area { width: 100%; }
+  .auth-error { max-width: none; }
   .signin-buttons { width: 100%; display: grid; grid-template-columns: 1fr; }
   .signin-buttons .account-button { width: 100%; }
   .sync-badge { flex: 1; }

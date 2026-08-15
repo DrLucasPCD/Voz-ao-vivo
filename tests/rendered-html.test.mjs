@@ -136,6 +136,8 @@ test("ships private free-tier Firebase voice-profile synchronization", async () 
   assert.match(firebaseSource, /NEXT_PUBLIC_ENABLE_APPLE_SIGN_IN/);
   assert.match(firebaseSource, /projectId: "voz-ao-vivo"/);
   assert.match(source, /Entrar com Google/);
+  assert.match(source, /auth\/unauthorized-domain/);
+  assert.match(source, /Authorized domains/);
   assert.match(source, /Entrar com Apple/);
   assert.match(source, /signInWithRedirect/);
   assert.match(source, /max-width: 767px/);

@@ -356,6 +356,7 @@ export function VoiceApp() {
   const [mode, setMode] = useState<"talk" | "train">("talk");
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [authError, setAuthError] = useState("");
   const [syncStatus, setSyncStatus] = useState<
     "local" | "syncing" | "synced" | "error"
   >("local");
@@ -479,8 +480,18 @@ export function VoiceApp() {
   }, []);
 
   useEffect(() => {
-    void getRedirectResult(firebaseAuth).catch(() => {
-      setError("Não consegui concluir o login. Tente entrar novamente.");
+    void getRedirectResult(firebaseAuth).catch((redirectError) => {
+      const code =
+        typeof redirectError === "object" && redirectError && "code" in redirectError
+          ? String(redirectError.code)
+          : "";
+      if (code === "auth/unauthorized-domain") {
+        setAuthError(
+          `O Firebase ainda não autorizou ${window.location.hostname}. Adicione este domínio em Authentication → Settings → Authorized domains.`,
+        );
+      } else {
+        setAuthError("Não consegui concluir o login redirecionado. Tente novamente.");
+      }
     });
   }, []);
 
@@ -741,6 +752,29 @@ export function VoiceApp() {
     providerName: "Google" | "Apple",
   ) => {
     setError("");
+    setAuthError("");
+    const currentDomain = window.location.hostname;
+    const showAuthFailure = (signInError: unknown) => {
+      const code =
+        typeof signInError === "object" && signInError && "code" in signInError
+          ? String(signInError.code)
+          : "";
+      if (code === "auth/unauthorized-domain") {
+        setAuthError(
+          `O Firebase recusou ${currentDomain}. Adicione este domínio em Authentication → Settings → Authorized domains.`,
+        );
+      } else if (code === "auth/operation-not-allowed") {
+        setAuthError(`O login com ${providerName} ainda precisa ser ativado no Firebase.`);
+      } else if (code === "auth/popup-closed-by-user") {
+        setAuthError(
+          `A janela de login foi fechada antes da conclusão. Se ela fechou sozinha, confirme que ${currentDomain} está nos domínios autorizados do Firebase.`,
+        );
+      } else if (code === "auth/network-request-failed") {
+        setAuthError("A conexão com o Google falhou. Verifique a internet e tente novamente.");
+      } else {
+        setAuthError(`Não consegui entrar com ${providerName}. Código: ${code || "erro desconhecido"}.`);
+      }
+    };
     try {
       const prefersRedirect =
         window.matchMedia("(max-width: 767px)").matches ||
@@ -761,14 +795,12 @@ export function VoiceApp() {
         code === "auth/popup-blocked" ||
         code === "auth/operation-not-supported-in-this-environment"
       ) {
-        await signInWithRedirect(firebaseAuth, provider);
-      } else if (code === "auth/operation-not-allowed") {
-        setError(
-          `O login com ${providerName} ainda precisa ser ativado no Firebase.`,
-        );
-      } else if (code !== "auth/popup-closed-by-user") {
-        setError(`Não consegui entrar com ${providerName}. Tente novamente.`);
-      }
+        try {
+          await signInWithRedirect(firebaseAuth, provider);
+        } catch (redirectError) {
+          showAuthFailure(redirectError);
+        }
+      } else showAuthFailure(signInError);
     }
   };
 
@@ -1891,6 +1923,9 @@ export function VoiceApp() {
               ) : null}
             </div>
           )}
+          {authError ? (
+            <div className="auth-error" role="alert">{authError}</div>
+          ) : null}
         </div>
       </header>
 
