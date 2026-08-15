@@ -11,11 +11,29 @@ test("is configured as a standard Next.js app for Netlify", async () => {
   ]);
 
   assert.match(packageJson, /"next": "\^16\.3\.1"/);
-  assert.match(packageJson, /"build": "next build"/);
+  assert.match(packageJson, /"build": "npm run build:piper-worker && next build"/);
   assert.doesNotMatch(packageJson, /vinext|wrangler|cloudflare/);
   assert.match(netlifyConfig, /command = "npm run build"/);
   assert.match(netlifyConfig, /publish = "\.next"/);
   assert.match(netlifyConfig, /Permissions-Policy = "microphone=\(self\)"/);
+});
+
+test("ships the local Piper Faber Brazilian voice", async () => {
+  const [source, piperClient, piperWorker, packageJson] = await Promise.all([
+    readFile(new URL("app/voice-app.tsx", root), "utf8"),
+    readFile(new URL("app/piper-voice.ts", root), "utf8"),
+    readFile(new URL("app/piper-voice.worker.ts", root), "utf8"),
+    readFile(new URL("package.json", root), "utf8"),
+  ]);
+
+  assert.match(source, /Voz neural \{PIPER_VOICE_NAME\}/);
+  assert.match(source, /synthesizeWithPiper/);
+  assert.match(piperClient, /pt_BR-faber-medium\.onnx/);
+  assert.match(piperClient, /piper-voice\.worker\.js/);
+  assert.match(piperWorker, /Trelis\/piper-pt-br-faber-medium/);
+  assert.match(piperWorker, /TtsSession\.create/);
+  assert.match(piperWorker, /navigator\.storage\.getDirectory/);
+  assert.match(packageJson, /@mintplex-labs\/piper-tts-web/);
 });
 
 test("ships personalized recognition without a paid API", async () => {

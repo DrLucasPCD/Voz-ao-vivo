@@ -7,7 +7,8 @@ pergunta e a reproduz com voz clara para o paciente.
 ## Recursos
 
 - reconhecimento de fala em português do Brasil;
-- reprodução da pergunta com síntese de voz;
+- reprodução da pergunta com a voz neural Piper Faber em português do Brasil;
+- síntese local no navegador, com voz nativa do aparelho como alternativa;
 - pelo menos 100 perguntas rápidas em cada especialidade;
 - prioridade dinâmica conforme as respostas ouvidas do paciente;
 - separação automática entre usuário, paciente e equipe/preceptoria;
@@ -84,6 +85,25 @@ Quando o turno é identificado como fala do usuário, a frase é emitida
 automaticamente em voz clara. O reconhecimento fica suspenso durante a síntese,
 descarta ecos semelhantes e só reabre o microfone depois que o áudio termina.
 Falas do paciente e da equipe nunca são reproduzidas automaticamente.
+
+### Voz neural Piper Faber
+
+A voz principal é o modelo
+[`Trelis/piper-pt-br-faber-medium`](https://huggingface.co/Trelis/piper-pt-br-faber-medium),
+uma voz masculina brasileira em ONNX, com amostragem de 22,05 kHz. O modelo tem
+aproximadamente 63 MB; considerando ONNX Runtime, fonemizador e recursos WASM,
+a primeira preparação pode transferir cerca de 95 MB.
+
+O download só começa quando o usuário toca em **Baixar voz** ou pede a primeira
+reprodução. Os arquivos ficam no armazenamento privado do navegador e são
+reaproveitados nas próximas consultas no mesmo dispositivo. A geração acontece
+em um Web Worker para não travar a interface. Depois que os componentes estão
+armazenados, o texto sintetizado não é enviado a um serviço remoto de voz.
+
+Se o navegador não oferecer armazenamento privado, WebAssembly suficiente ou
+memória para o modelo, a Clara muda automaticamente para a voz em português do
+próprio aparelho. O modelo Faber está publicado sob CC0; o adaptador web Piper e
+o ONNX Runtime usam licenças permissivas.
 
 ## Ativar a sincronização Firebase
 

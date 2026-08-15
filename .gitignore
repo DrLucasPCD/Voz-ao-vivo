@@ -41,6 +41,7 @@ ui-debug.log*
 .vercel
 
 /dist/
+/public/piper-voice.worker.js
 /.wrangler/
 /outputs/
 /work/

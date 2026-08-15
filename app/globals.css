@@ -378,6 +378,33 @@ h1 em { color: var(--green-2); font-weight: 500; }
 .free-recognition-card .free-badge { padding: 6px 9px; border-radius: 999px; background: var(--green); color: white; font-size: 11px; font-weight: 900; white-space: nowrap; }
 .toggle:disabled { opacity: .45; cursor: not-allowed; }
 
+.piper-voice-card {
+  margin-top: 18px;
+  padding: 19px 20px;
+  border: 1px solid #c5b7df;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #fbf9ff, #f4fbf7);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 14px;
+}
+.piper-voice-icon { width: 44px; height: 44px; border-radius: 13px; display: grid; place-items: center; background: #ece5f8; color: #503c79; }
+.piper-voice-copy { min-width: 0; display: grid; gap: 5px; }
+.piper-voice-heading { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.piper-voice-heading strong { font-size: 13px; }
+.piper-voice-copy > span { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.piper-voice-copy > small { color: #655c72; font-size: 10px; line-height: 1.4; }
+.piper-status { padding: 4px 7px; border-radius: 999px; background: #ece5f8; color: #503c79; font-size: 9px; font-weight: 900; }
+.piper-status.ready { background: var(--mint); color: var(--green); }
+.piper-status.downloading, .piper-status.generating { background: #fff1ce; color: #765d1f; }
+.piper-status.fallback { background: #f5e5e3; color: #8b4038; }
+.piper-progress { width: min(380px, 100%); height: 7px; overflow: hidden; border-radius: 999px; background: #e5e0ea; }
+.piper-progress span { display: block; min-width: 3px; height: 100%; border-radius: inherit; background: #7d64ae; transition: width .2s ease; }
+.piper-error { color: #9d4037 !important; }
+.piper-download-button { min-height: 40px; padding: 0 13px; border: 1px solid #a99ac6; border-radius: 11px; background: white; color: #503c79; display: inline-flex; align-items: center; justify-content: center; gap: 7px; font-size: 10px; font-weight: 900; cursor: pointer; white-space: nowrap; }
+.piper-download-button:disabled { opacity: .68; cursor: default; }
+
 .lower-grid { display: grid; grid-template-columns: 1.45fr .55fr; gap: 18px; margin: 18px 0 70px; }
 .quick-card { padding: 21px 24px; }
 .small-card-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
@@ -498,6 +525,8 @@ footer { width: min(1184px, calc(100% - 48px)); margin: 0 auto; min-height: 74px
   .message-actions { flex-direction: column; }
   .free-recognition-card { grid-template-columns: auto 1fr; align-items: start; }
   .free-recognition-card > .free-badge { grid-column: 2; justify-self: start; }
+  .piper-voice-card { grid-template-columns: auto 1fr; align-items: start; }
+  .piper-download-button { grid-column: 2; justify-self: start; }
   .primary-button, .secondary-button { width: 100%; flex: none; }
   .lower-grid { margin-top: 12px; }
   .quick-list { grid-template-columns: 1fr; }

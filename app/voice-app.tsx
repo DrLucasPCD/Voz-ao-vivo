@@ -63,6 +63,15 @@ import {
   firebaseAuth,
   googleAuthProvider,
 } from "./firebase";
+import {
+  isPiperVoiceCached,
+  PIPER_FIRST_USE_DOWNLOAD_MB,
+  PIPER_MODEL_SIZE_MB,
+  PIPER_VOICE_NAME,
+  preparePiperVoice,
+  synthesizeWithPiper,
+  type PiperProgress,
+} from "./piper-voice";
 
 type RecognitionAlternative = { transcript: string; confidence: number };
 
@@ -331,6 +340,11 @@ export function VoiceApp() {
   const [message, setMessage] = useState("Pronto para ouvir");
   const [error, setError] = useState("");
   const [autoSpeak, setAutoSpeak] = useState(true);
+  const [piperStatus, setPiperStatus] = useState<
+    "idle" | "downloading" | "ready" | "generating" | "fallback"
+  >("idle");
+  const [piperDownloadPercent, setPiperDownloadPercent] = useState(0);
+  const [piperError, setPiperError] = useState("");
   const [patientTurns, setPatientTurns] = useState<string[]>([]);
   const [teamTurns, setTeamTurns] = useState<string[]>([]);
   const [lastDetectedSpeaker, setLastDetectedSpeaker] = useState<
@@ -351,6 +365,9 @@ export function VoiceApp() {
   const lastSynthesizedTextRef = useRef("");
   const synthesisEndedAtRef = useRef(0);
   const startListeningRef = useRef<(() => void) | null>(null);
+  const outputAudioContextRef = useRef<AudioContext | null>(null);
+  const activePiperSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const speechRequestRef = useRef(0);
   const conversationRecorderRef = useRef<MediaRecorder | null>(null);
   const conversationChunksRef = useRef<Blob[]>([]);
   const conversationStreamRef = useRef<MediaStream | null>(null);
@@ -384,6 +401,12 @@ export function VoiceApp() {
   useEffect(() => {
     void getRedirectResult(firebaseAuth).catch(() => {
       setError("Não consegui concluir o login. Tente entrar novamente.");
+    });
+  }, []);
+
+  useEffect(() => {
+    void isPiperVoiceCached().then((cached) => {
+      if (cached) setPiperStatus("ready");
     });
   }, []);
 
@@ -526,6 +549,12 @@ export function VoiceApp() {
       streamRef.current?.getTracks().forEach((track) => track.stop());
       conversationStreamRef.current?.getTracks().forEach((track) => track.stop());
       window.speechSynthesis?.cancel();
+      try {
+        activePiperSourceRef.current?.stop();
+      } catch {
+        // A fonte já havia terminado.
+      }
+      void outputAudioContextRef.current?.close();
       if (latestRecordingUrl) URL.revokeObjectURL(latestRecordingUrl);
     };
   }, [latestRecordingUrl]);
@@ -637,50 +666,157 @@ export function VoiceApp() {
     }
   };
 
-  const speak = useCallback((text: string, resumeListening = false) => {
-    if (!text.trim() || !("speechSynthesis" in window)) return;
+  const updatePiperProgress = useCallback((progress: PiperProgress) => {
+    if (progress.phase === "download") {
+      const percent = progress.total
+        ? Math.min(100, Math.round((progress.loaded / progress.total) * 100))
+        : 0;
+      setPiperStatus("downloading");
+      setPiperDownloadPercent(percent);
+      setMessage(
+        percent
+          ? `Baixando voz Faber… ${percent}%`
+          : "Baixando voz Faber pela primeira vez…",
+      );
+    } else if (progress.phase === "generating") {
+      setPiperStatus("generating");
+      setMessage("Preparando áudio com a voz Faber…");
+    } else {
+      setPiperStatus("ready");
+      setPiperDownloadPercent(100);
+      setMessage("Voz Faber carregada neste dispositivo");
+    }
+  }, []);
+
+  const ensureOutputAudioContext = useCallback(() => {
+    if (!outputAudioContextRef.current || outputAudioContextRef.current.state === "closed") {
+      outputAudioContextRef.current = new AudioContext();
+    }
+    if (outputAudioContextRef.current.state === "suspended") {
+      void outputAudioContextRef.current.resume();
+    }
+    return outputAudioContextRef.current;
+  }, []);
+
+  const speak = useCallback(async (text: string, resumeListening = false) => {
+    const phrase = text.trim();
+    if (!phrase) return;
+    const requestId = ++speechRequestRef.current;
     recognitionRef.current?.abort();
     if (conversationRecorderRef.current?.state === "recording") {
       conversationRecorderRef.current.stop();
     }
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text.trim());
-    const voices = window.speechSynthesis.getVoices();
-    utterance.voice =
-      voices.find((voice) => voice.lang.toLowerCase() === "pt-br") ??
-      voices.find((voice) => voice.lang.toLowerCase().startsWith("pt")) ??
-      null;
-    utterance.lang = "pt-BR";
-    utterance.rate = 0.92;
-    utterance.pitch = 1;
-    utterance.onstart = () => {
-      isAppSpeakingRef.current = true;
-      lastSynthesizedTextRef.current = text.trim();
-      setIsSpeaking(true);
-      setMessage("Falando em voz clara");
-    };
-    utterance.onend = () => {
+    window.speechSynthesis?.cancel();
+    try {
+      activePiperSourceRef.current?.stop();
+    } catch {
+      // A fonte anterior já havia terminado.
+    }
+    activePiperSourceRef.current = null;
+    const outputContext = ensureOutputAudioContext();
+    isAppSpeakingRef.current = true;
+    lastSynthesizedTextRef.current = phrase;
+    setIsSpeaking(true);
+    setPiperError("");
+
+    const finish = (finalMessage = "Pronto para ouvir") => {
+      if (requestId !== speechRequestRef.current) return;
       isAppSpeakingRef.current = false;
       synthesisEndedAtRef.current = Date.now();
       setIsSpeaking(false);
+      setPiperStatus((status) => status === "fallback" ? status : "ready");
       setMessage(
         resumeListening
           ? "Áudio concluído; preparando escuta automática…"
-          : "Pronto para ouvir",
+          : finalMessage,
       );
       if (resumeListening) {
         window.setTimeout(() => startListeningRef.current?.(), 550);
       }
     };
-    utterance.onerror = () => {
-      isAppSpeakingRef.current = false;
-      setIsSpeaking(false);
-      setMessage("Não consegui reproduzir o áudio");
+
+    const playNativeFallback = () => {
+      setPiperStatus("fallback");
+      if (!("speechSynthesis" in window)) {
+        finish("Não consegui reproduzir o áudio");
+        return;
+      }
+      const utterance = new SpeechSynthesisUtterance(phrase);
+      const voices = window.speechSynthesis.getVoices();
+      utterance.voice =
+        voices.find((voice) => voice.lang.toLowerCase() === "pt-br") ??
+        voices.find((voice) => voice.lang.toLowerCase().startsWith("pt")) ??
+        null;
+      utterance.lang = "pt-BR";
+      utterance.rate = 0.92;
+      utterance.pitch = 1;
+      utterance.onstart = () => setMessage("Falando com a voz do aparelho");
+      utterance.onend = () => finish();
+      utterance.onerror = () => finish("Não consegui reproduzir o áudio");
+      window.speechSynthesis.speak(utterance);
     };
-    window.speechSynthesis.speak(utterance);
-  }, []);
+
+    try {
+      const audioBlob = await synthesizeWithPiper(phrase, updatePiperProgress);
+      if (requestId !== speechRequestRef.current) return;
+      const decodedAudio = await outputContext.decodeAudioData(
+        await audioBlob.arrayBuffer(),
+      );
+      if (requestId !== speechRequestRef.current) return;
+      await outputContext.resume();
+      const source = outputContext.createBufferSource();
+      source.buffer = decodedAudio;
+      source.connect(outputContext.destination);
+      activePiperSourceRef.current = source;
+      source.onended = () => {
+        activePiperSourceRef.current = null;
+        finish();
+      };
+      setMessage("Falando com a voz Faber");
+      source.start();
+    } catch (piperFailure) {
+      if (requestId !== speechRequestRef.current) return;
+      try {
+        activePiperSourceRef.current?.stop();
+      } catch {
+        // A fonte já havia terminado.
+      }
+      activePiperSourceRef.current = null;
+      setPiperError(
+        piperFailure instanceof Error
+          ? piperFailure.message
+          : "A voz Faber não pôde ser carregada",
+      );
+      playNativeFallback();
+    }
+  }, [ensureOutputAudioContext, updatePiperProgress]);
+
+  const prepareFaberVoice = async () => {
+    setPiperError("");
+    setPiperStatus("downloading");
+    try {
+      await preparePiperVoice(updatePiperProgress);
+      setPiperStatus("ready");
+      setPiperDownloadPercent(100);
+      setMessage("Voz Faber pronta para a consulta");
+    } catch (preparationError) {
+      setPiperStatus("fallback");
+      setPiperError(
+        preparationError instanceof Error
+          ? preparationError.message
+          : "Não consegui baixar a voz Faber",
+      );
+    }
+  };
 
   const stopSpeaking = () => {
+    speechRequestRef.current += 1;
+    try {
+      activePiperSourceRef.current?.stop();
+    } catch {
+      // A fonte já havia terminado.
+    }
+    activePiperSourceRef.current = null;
     window.speechSynthesis?.cancel();
     isAppSpeakingRef.current = false;
     setIsSpeaking(false);
@@ -689,6 +825,7 @@ export function VoiceApp() {
 
   const startListening = async () => {
     if (isAppSpeakingRef.current) return;
+    ensureOutputAudioContext();
     setError("");
     setCorrectionSaved(false);
     setPendingCorrectionAudio(null);
@@ -1442,6 +1579,65 @@ export function VoiceApp() {
                 </small>
               </div>
               <span className="free-badge">R$ 0</span>
+            </article>
+
+            <article className="piper-voice-card" aria-live="polite">
+              <div className="piper-voice-icon"><Volume2 size={23} /></div>
+              <div className="piper-voice-copy">
+                <div className="piper-voice-heading">
+                  <strong>Voz neural {PIPER_VOICE_NAME}</strong>
+                  <span className={`piper-status ${piperStatus}`}>
+                    {piperStatus === "downloading"
+                      ? piperDownloadPercent
+                        ? `Baixando ${piperDownloadPercent}%`
+                        : "Iniciando download"
+                      : piperStatus === "generating"
+                        ? "Preparando voz"
+                        : piperStatus === "ready"
+                          ? "Pronta neste dispositivo"
+                          : piperStatus === "fallback"
+                            ? "Alternativa do aparelho ativa"
+                            : "Disponível para baixar"}
+                  </span>
+                </div>
+                <span>
+                  Modelo Piper executado localmente. Depois do primeiro download,
+                  o texto da consulta não é enviado para um serviço de síntese.
+                </span>
+                <small>
+                  O modelo tem aproximadamente {PIPER_MODEL_SIZE_MB} MB e fica no
+                  armazenamento privado deste navegador. A primeira preparação pode
+                  transferir até cerca de {PIPER_FIRST_USE_DOWNLOAD_MB} MB com os
+                  componentes de execução. Em aparelhos mais antigos, a Clara usa
+                  automaticamente a voz nativa como alternativa.
+                </small>
+                {piperStatus === "downloading" ? (
+                  <div
+                    className="piper-progress"
+                    role="progressbar"
+                    aria-label="Download da voz Faber"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={piperDownloadPercent}
+                  >
+                    <span style={{ width: `${piperDownloadPercent}%` }} />
+                  </div>
+                ) : null}
+                {piperError ? <small className="piper-error">{piperError}</small> : null}
+              </div>
+              <button
+                className="piper-download-button"
+                onClick={prepareFaberVoice}
+                disabled={piperStatus === "downloading" || piperStatus === "generating" || piperStatus === "ready"}
+              >
+                {piperStatus === "ready" ? (
+                  <><Check size={17} /> Voz pronta</>
+                ) : piperStatus === "downloading" ? (
+                  <><RefreshCw size={17} /> Baixando…</>
+                ) : (
+                  <><Download size={17} /> Baixar voz</>
+                )}
+              </button>
             </article>
 
             <section className="lower-grid">
