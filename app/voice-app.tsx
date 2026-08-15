@@ -352,6 +352,29 @@ function removeLastMatchingTurn(turns: string[], text: string) {
   return index < 0 ? turns : turns.filter((_, turnIndex) => turnIndex !== index);
 }
 
+function authFailureDetails(authFailure: unknown) {
+  if (typeof authFailure === "string") {
+    return { code: "", message: authFailure, name: "" };
+  }
+  if (!authFailure || typeof authFailure !== "object") {
+    return { code: "", message: "", name: "" };
+  }
+
+  const candidate = authFailure as {
+    code?: unknown;
+    message?: unknown;
+    name?: unknown;
+  };
+  return {
+    code: typeof candidate.code === "string" ? candidate.code : "",
+    message:
+      typeof candidate.message === "string"
+        ? candidate.message.replace(/\s+/g, " ").trim().slice(0, 220)
+        : "",
+    name: typeof candidate.name === "string" ? candidate.name : "",
+  };
+}
+
 export function VoiceApp() {
   const [mode, setMode] = useState<"talk" | "train">("talk");
   const [user, setUser] = useState<User | null>(null);
@@ -480,17 +503,23 @@ export function VoiceApp() {
   }, []);
 
   useEffect(() => {
-    void getRedirectResult(firebaseAuth).catch((redirectError) => {
-      const code =
-        typeof redirectError === "object" && redirectError && "code" in redirectError
-          ? String(redirectError.code)
-          : "";
+    void getRedirectResult(firebaseAuth).catch(async (redirectError) => {
+      await Promise.race([
+        firebaseAuth.authStateReady(),
+        new Promise((resolve) => window.setTimeout(resolve, 800)),
+      ]);
+      if (firebaseAuth.currentUser) return;
+
+      const { code, message, name } = authFailureDetails(redirectError);
+      console.error("[Clara: login redirecionado]", { code, message, name });
       if (code === "auth/unauthorized-domain") {
         setAuthError(
           `O Firebase ainda não autorizou ${window.location.hostname}. Adicione este domínio em Authentication → Settings → Authorized domains.`,
         );
       } else {
-        setAuthError("Não consegui concluir o login redirecionado. Tente novamente.");
+        setAuthError(
+          `Não consegui concluir o login redirecionado.${code ? ` Código: ${code}.` : ""}${message ? ` Detalhe: ${message}` : " Tente novamente."}`,
+        );
       }
     });
   }, []);
@@ -755,10 +784,8 @@ export function VoiceApp() {
     setAuthError("");
     const currentDomain = window.location.hostname;
     const showAuthFailure = (signInError: unknown) => {
-      const code =
-        typeof signInError === "object" && signInError && "code" in signInError
-          ? String(signInError.code)
-          : "";
+      const { code, message, name } = authFailureDetails(signInError);
+      console.error("[Clara: login]", { providerName, code, message, name });
       if (code === "auth/unauthorized-domain") {
         setAuthError(
           `O Firebase recusou ${currentDomain}. Adicione este domínio em Authentication → Settings → Authorized domains.`,
@@ -771,26 +798,40 @@ export function VoiceApp() {
         );
       } else if (code === "auth/network-request-failed") {
         setAuthError("A conexão com o Google falhou. Verifique a internet e tente novamente.");
+      } else if (code === "auth/web-storage-unsupported") {
+        setAuthError(
+          "O navegador bloqueou o armazenamento necessário para manter o login. Saia do modo privado ou permita os dados do site e tente novamente.",
+        );
+      } else if (code === "auth/account-exists-with-different-credential") {
+        setAuthError(
+          "Este e-mail já está associado a outro método de login no Firebase.",
+        );
       } else {
-        setAuthError(`Não consegui entrar com ${providerName}. Código: ${code || "erro desconhecido"}.`);
+        const diagnostic = code
+          ? `Código: ${code}.`
+          : message
+            ? `Detalhe: ${message}`
+            : name
+              ? `Detalhe: ${name}.`
+              : "O navegador não informou o motivo.";
+        setAuthError(`Não consegui entrar com ${providerName}. ${diagnostic}`);
       }
     };
     try {
-      const prefersRedirect =
-        window.matchMedia("(max-width: 767px)").matches ||
-        /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-
-      if (prefersRedirect) {
-        await signInWithRedirect(firebaseAuth, provider);
+      // Popup is also the safest option on mobile when the app is hosted outside
+      // Firebase Hosting, because it does not depend on third-party storage.
+      await signInWithPopup(firebaseAuth, provider);
+    } catch (signInError) {
+      await Promise.race([
+        firebaseAuth.authStateReady(),
+        new Promise((resolve) => window.setTimeout(resolve, 800)),
+      ]);
+      if (firebaseAuth.currentUser) {
+        setAuthError("");
         return;
       }
 
-      await signInWithPopup(firebaseAuth, provider);
-    } catch (signInError) {
-      const code =
-        typeof signInError === "object" && signInError && "code" in signInError
-          ? String(signInError.code)
-          : "";
+      const { code } = authFailureDetails(signInError);
       if (
         code === "auth/popup-blocked" ||
         code === "auth/operation-not-supported-in-this-environment"

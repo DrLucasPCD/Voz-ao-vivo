@@ -140,7 +140,9 @@ test("ships private free-tier Firebase voice-profile synchronization", async () 
   assert.match(source, /Authorized domains/);
   assert.match(source, /Entrar com Apple/);
   assert.match(source, /signInWithRedirect/);
-  assert.match(source, /max-width: 767px/);
+  assert.match(source, /signInWithPopup/);
+  assert.match(source, /authStateReady/);
+  assert.match(source, /authFailureDetails/);
   assert.match(source, /syncTrainingSample/);
   assert.match(cloudSource, /uploadVoiceSample/);
   assert.match(cloudSource, /subscribeToVoiceSamples/);
