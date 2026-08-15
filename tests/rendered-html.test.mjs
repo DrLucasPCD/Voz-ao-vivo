@@ -145,7 +145,7 @@ test("ships private free-tier Firebase voice-profile synchronization", async () 
   assert.match(source, /signInWithPopup/);
   assert.match(source, /authStateReady/);
   assert.match(source, /authFailureDetails/);
-  assert.match(source, /AuthFlowTimeout/);
+  assert.match(source, /clara-auth-redirect-pending/);
   assert.match(source, /account-profile/);
   assert.match(source, /redirect_uri_mismatch/);
   assert.match(source, /Google Auth Platform/);

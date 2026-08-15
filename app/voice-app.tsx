@@ -352,6 +352,8 @@ function removeLastMatchingTurn(turns: string[], text: string) {
   return index < 0 ? turns : turns.filter((_, turnIndex) => turnIndex !== index);
 }
 
+const AUTH_REDIRECT_PENDING_KEY = "clara-auth-redirect-pending";
+
 function authFailureDetails(authFailure: unknown) {
   if (typeof authFailure === "string") {
     return { code: "", message: authFailure, name: "" };
@@ -504,25 +506,50 @@ export function VoiceApp() {
   }, []);
 
   useEffect(() => {
-    void getRedirectResult(firebaseAuth).catch(async (redirectError) => {
-      await Promise.race([
-        firebaseAuth.authStateReady(),
-        new Promise((resolve) => window.setTimeout(resolve, 800)),
-      ]);
-      if (firebaseAuth.currentUser) return;
+    const pendingProvider = window.sessionStorage.getItem(
+      AUTH_REDIRECT_PENDING_KEY,
+    );
 
-      const { code, message, name } = authFailureDetails(redirectError);
-      console.error("[Clara: login redirecionado]", { code, message, name });
-      if (code === "auth/unauthorized-domain") {
-        setAuthError(
-          `O Firebase ainda não autorizou ${window.location.hostname}. Adicione este domínio em Authentication → Settings → Authorized domains.`,
-        );
-      } else {
-        setAuthError(
-          `Não consegui concluir o login redirecionado.${code ? ` Código: ${code}.` : ""}${message ? ` Detalhe: ${message}` : " Tente novamente."}`,
-        );
+    void (async () => {
+      try {
+        const credential = await getRedirectResult(firebaseAuth);
+        if (credential?.user) {
+          setUser(credential.user);
+          setSyncStatus("syncing");
+          setAuthError("");
+          return;
+        }
+
+        await Promise.race([
+          firebaseAuth.authStateReady(),
+          new Promise((resolve) => window.setTimeout(resolve, 1_500)),
+        ]);
+        if (firebaseAuth.currentUser) {
+          setUser(firebaseAuth.currentUser);
+          setSyncStatus("syncing");
+          setAuthError("");
+        } else if (pendingProvider) {
+          setAuthError(
+            "O Google retornou ao aplicativo, mas o Firebase não entregou a sessão. Tente entrar novamente; agora o login usará uma nova solicitação de redirecionamento.",
+          );
+        }
+      } catch (redirectError) {
+        const { code, message, name } = authFailureDetails(redirectError);
+        console.error("[Clara: login redirecionado]", { code, message, name });
+        if (code === "auth/unauthorized-domain") {
+          setAuthError(
+            `O Firebase ainda não autorizou ${window.location.hostname}. Adicione este domínio em Authentication → Settings → Authorized domains.`,
+          );
+        } else {
+          setAuthError(
+            `Não consegui concluir o login redirecionado.${code ? ` Código: ${code}.` : ""}${message ? ` Detalhe: ${message}` : " Tente novamente."}`,
+          );
+        }
+      } finally {
+        window.sessionStorage.removeItem(AUTH_REDIRECT_PENDING_KEY);
+        setIsSigningIn(false);
       }
-    });
+    })();
   }, []);
 
   useEffect(() => {
@@ -810,10 +837,6 @@ export function VoiceApp() {
         setAuthError(
           "Este e-mail já está associado a outro método de login no Firebase.",
         );
-      } else if (name === "AuthFlowTimeout") {
-        setAuthError(
-          "A conta Google foi aberta, mas o aplicativo não recebeu a confirmação do login. Feche outras janelas de login e tente novamente. Se continuar, o retorno OAuth deste domínio ainda precisa ser liberado no Google Cloud.",
-        );
       } else {
         const diagnostic = code
           ? `Código: ${code}.`
@@ -826,42 +849,19 @@ export function VoiceApp() {
       }
     };
     try {
-      // Popup is also the safest option on mobile when the app is hosted outside
-      // Firebase Hosting, because it does not depend on third-party storage.
-      const credential = await Promise.race([
-        signInWithPopup(firebaseAuth, provider),
-        new Promise<never>((_, reject) => {
-          window.setTimeout(() => {
-            const timeoutError = new Error(
-              "A janela do Google fechou sem devolver a sessão ao aplicativo.",
-            );
-            timeoutError.name = "AuthFlowTimeout";
-            reject(timeoutError);
-          }, 25_000);
-        }),
-      ]);
-      setUser(credential.user);
-      setSyncStatus("syncing");
-      setAuthError("");
+      window.sessionStorage.setItem(AUTH_REDIRECT_PENDING_KEY, providerName);
+      await signInWithRedirect(firebaseAuth, provider);
     } catch (signInError) {
-      await Promise.race([
-        firebaseAuth.authStateReady(),
-        new Promise((resolve) => window.setTimeout(resolve, 800)),
-      ]);
-      if (firebaseAuth.currentUser) {
-        setAuthError("");
-        return;
-      }
-
       const { code } = authFailureDetails(signInError);
-      if (
-        code === "auth/popup-blocked" ||
-        code === "auth/operation-not-supported-in-this-environment"
-      ) {
+      window.sessionStorage.removeItem(AUTH_REDIRECT_PENDING_KEY);
+      if (code === "auth/operation-not-supported-in-this-environment") {
         try {
-          await signInWithRedirect(firebaseAuth, provider);
-        } catch (redirectError) {
-          showAuthFailure(redirectError);
+          const credential = await signInWithPopup(firebaseAuth, provider);
+          setUser(credential.user);
+          setSyncStatus("syncing");
+          setAuthError("");
+        } catch (popupError) {
+          showAuthFailure(popupError);
         }
       } else showAuthFailure(signInError);
     } finally {
