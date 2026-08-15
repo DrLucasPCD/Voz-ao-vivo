@@ -114,6 +114,8 @@ workerScope.onmessage = async (event: MessageEvent<WorkerRequest>) => {
       transcriber(new Float32Array(request.audio), {
         language: "portuguese",
         task: "transcribe",
+        chunk_length_s: 28,
+        stride_length_s: 4,
       }),
     );
     const output = Array.isArray(result) ? result[0] : result;

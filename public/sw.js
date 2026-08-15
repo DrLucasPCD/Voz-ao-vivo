@@ -1,4 +1,4 @@
-const CACHE_VERSION = "clara-offline-v2";
+const CACHE_VERSION = "clara-offline-v3";
 const APP_CACHE = `${CACHE_VERSION}-app`;
 const CORE_URLS = [
   "/",
@@ -61,6 +61,26 @@ self.addEventListener("fetch", (event) => {
           return response;
         })
         .catch(async () => (await caches.match(request)) ?? caches.match("/")),
+    );
+    return;
+  }
+
+  const mustRefresh =
+    url.pathname.startsWith("/_next/static/") ||
+    url.pathname.endsWith(".worker.js") ||
+    url.pathname === "/sw.js";
+
+  if (mustRefresh) {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const copy = response.clone();
+            void caches.open(APP_CACHE).then((cache) => cache.put(request, copy));
+          }
+          return response;
+        })
+        .catch(() => caches.match(request)),
     );
     return;
   }

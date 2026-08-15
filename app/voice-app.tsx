@@ -133,6 +133,7 @@ declare global {
   interface Window {
     SpeechRecognition?: BrowserRecognitionConstructor;
     webkitSpeechRecognition?: BrowserRecognitionConstructor;
+    webkitAudioContext?: typeof AudioContext;
   }
 }
 
@@ -409,12 +410,15 @@ export function VoiceApp() {
   const synthesisEndedAtRef = useRef(0);
   const startListeningRef = useRef<(() => void) | null>(null);
   const outputAudioContextRef = useRef<AudioContext | null>(null);
-  const activePiperSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const activePiperAudioRef = useRef<HTMLAudioElement | null>(null);
+  const activePiperAudioUrlRef = useRef("");
+  const activeNativeUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const speechRequestRef = useRef(0);
   const conversationRecorderRef = useRef<MediaRecorder | null>(null);
   const conversationChunksRef = useRef<Blob[]>([]);
   const conversationStreamRef = useRef<MediaStream | null>(null);
   const conversationStartedAtRef = useRef(0);
+  const conversationTimeoutRef = useRef<number | null>(null);
   const pendingCorrectionDurationMsRef = useRef(0);
   const [pendingCorrectionAudio, setPendingCorrectionAudio] = useState<Blob | null>(null);
   const [isPreparingCorrectionAudio, setIsPreparingCorrectionAudio] = useState(false);
@@ -689,11 +693,13 @@ export function VoiceApp() {
       recognitionRef.current?.abort();
       streamRef.current?.getTracks().forEach((track) => track.stop());
       conversationStreamRef.current?.getTracks().forEach((track) => track.stop());
+      if (conversationTimeoutRef.current !== null) {
+        window.clearTimeout(conversationTimeoutRef.current);
+      }
       window.speechSynthesis?.cancel();
-      try {
-        activePiperSourceRef.current?.stop();
-      } catch {
-        // A fonte já havia terminado.
+      activePiperAudioRef.current?.pause();
+      if (activePiperAudioUrlRef.current) {
+        URL.revokeObjectURL(activePiperAudioUrlRef.current);
       }
       void outputAudioContextRef.current?.close();
       if (latestRecordingUrl) URL.revokeObjectURL(latestRecordingUrl);
@@ -840,14 +846,31 @@ export function VoiceApp() {
   }, []);
 
   const ensureOutputAudioContext = useCallback(() => {
+    const AudioContextConstructor =
+      window.AudioContext ?? window.webkitAudioContext;
+    if (!AudioContextConstructor) return null;
     if (!outputAudioContextRef.current || outputAudioContextRef.current.state === "closed") {
-      outputAudioContextRef.current = new AudioContext();
-    }
-    if (outputAudioContextRef.current.state === "suspended") {
-      void outputAudioContextRef.current.resume();
+      outputAudioContextRef.current = new AudioContextConstructor();
     }
     return outputAudioContextRef.current;
   }, []);
+
+  const unlockAudioOutput = useCallback(() => {
+    const context = ensureOutputAudioContext();
+    window.speechSynthesis?.resume();
+    if (!context) return null;
+    if (context.state === "suspended") void context.resume();
+    try {
+      const silentBuffer = context.createBuffer(1, 1, context.sampleRate || 22_050);
+      const silentSource = context.createBufferSource();
+      silentSource.buffer = silentBuffer;
+      silentSource.connect(context.destination);
+      silentSource.start(0);
+    } catch {
+      // O contexto ainda pode ser ativado normalmente sem a amostra silenciosa.
+    }
+    return context;
+  }, [ensureOutputAudioContext]);
 
   const speak = useCallback(async (text: string, resumeListening = false) => {
     const phrase = text.trim();
@@ -858,13 +881,13 @@ export function VoiceApp() {
       conversationRecorderRef.current.stop();
     }
     window.speechSynthesis?.cancel();
-    try {
-      activePiperSourceRef.current?.stop();
-    } catch {
-      // A fonte anterior já havia terminado.
+    activePiperAudioRef.current?.pause();
+    activePiperAudioRef.current = null;
+    if (activePiperAudioUrlRef.current) {
+      URL.revokeObjectURL(activePiperAudioUrlRef.current);
+      activePiperAudioUrlRef.current = "";
     }
-    activePiperSourceRef.current = null;
-    const outputContext = ensureOutputAudioContext();
+    const outputContext = unlockAudioOutput();
     isAppSpeakingRef.current = true;
     lastSynthesizedTextRef.current = phrase;
     setIsSpeaking(true);
@@ -875,7 +898,6 @@ export function VoiceApp() {
       isAppSpeakingRef.current = false;
       synthesisEndedAtRef.current = Date.now();
       setIsSpeaking(false);
-      setPiperStatus((status) => status === "fallback" ? status : "ready");
       setMessage(
         resumeListening
           ? "Áudio concluído; preparando escuta automática…"
@@ -886,10 +908,16 @@ export function VoiceApp() {
       }
     };
 
-    const playNativeFallback = () => {
-      setPiperStatus("fallback");
+    let nativeFallbackStarted = false;
+    const playNativeFallback = (
+      speakingMessage = "Falando com a voz do aparelho",
+      markAsFallback = true,
+    ) => {
+      if (nativeFallbackStarted) return;
+      nativeFallbackStarted = true;
+      if (markAsFallback) setPiperStatus("fallback");
       if (!("speechSynthesis" in window)) {
-        finish("Não consegui reproduzir o áudio");
+        finish("A voz do navegador não está disponível; preparando o Piper para a próxima reprodução.");
         return;
       }
       const utterance = new SpeechSynthesisUtterance(phrase);
@@ -901,38 +929,107 @@ export function VoiceApp() {
       utterance.lang = "pt-BR";
       utterance.rate = 0.92;
       utterance.pitch = 1;
-      utterance.onstart = () => setMessage("Falando com a voz do aparelho");
-      utterance.onend = () => finish();
-      utterance.onerror = () => finish("Não consegui reproduzir o áudio");
+      utterance.volume = 1;
+      utterance.onstart = () => setMessage(speakingMessage);
+      utterance.onend = () => {
+        activeNativeUtteranceRef.current = null;
+        finish();
+      };
+      utterance.onerror = () => {
+        activeNativeUtteranceRef.current = null;
+        finish("O navegador bloqueou o áudio. Toque em Testar áudio agora.");
+      };
+      activeNativeUtteranceRef.current = utterance;
+      window.speechSynthesis.resume();
       window.speechSynthesis.speak(utterance);
     };
+
+    if (piperStatus !== "ready") {
+      playNativeFallback("Falando agora com a voz do aparelho", false);
+      if (navigator.onLine && piperStatus !== "downloading" && piperStatus !== "generating") {
+        setPiperStatus("downloading");
+        setPiperDownloadPercent(0);
+        void preparePiperVoice((progress) => {
+          if (progress.phase === "download") {
+            setPiperStatus("downloading");
+            setPiperDownloadPercent(
+              progress.total
+                ? Math.min(100, Math.round((progress.loaded / progress.total) * 100))
+                : 0,
+            );
+          }
+        })
+          .then(() => {
+            setPiperStatus("ready");
+            setPiperDownloadPercent(100);
+          })
+          .catch((preparationError) => {
+            setPiperStatus("fallback");
+            setPiperError(
+              preparationError instanceof Error
+                ? preparationError.message
+                : "Não consegui preparar a voz Faber",
+            );
+          });
+      }
+      return;
+    }
 
     try {
       const audioBlob = await synthesizeWithPiper(phrase, updatePiperProgress);
       if (requestId !== speechRequestRef.current) return;
-      const decodedAudio = await outputContext.decodeAudioData(
-        await audioBlob.arrayBuffer(),
-      );
-      if (requestId !== speechRequestRef.current) return;
-      await outputContext.resume();
-      const source = outputContext.createBufferSource();
-      source.buffer = decodedAudio;
-      source.connect(outputContext.destination);
-      activePiperSourceRef.current = source;
-      source.onended = () => {
-        activePiperSourceRef.current = null;
+      if (outputContext) {
+        const decodedAudio = await outputContext.decodeAudioData(
+          await audioBlob.arrayBuffer(),
+        );
+        if (requestId !== speechRequestRef.current) return;
+        const samples = decodedAudio.getChannelData(0);
+        let peak = 0;
+        for (let index = 0; index < samples.length; index += 128) {
+          peak = Math.max(peak, Math.abs(samples[index]));
+        }
+        if (peak < 0.0005) {
+          throw new Error("A voz Faber gerou um áudio sem volume");
+        }
+      }
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+      audio.preload = "auto";
+      audio.volume = 1;
+      activePiperAudioRef.current = audio;
+      activePiperAudioUrlRef.current = audioUrl;
+      const releaseAudio = () => {
+        if (activePiperAudioRef.current === audio) {
+          activePiperAudioRef.current = null;
+        }
+        if (activePiperAudioUrlRef.current === audioUrl) {
+          URL.revokeObjectURL(audioUrl);
+          activePiperAudioUrlRef.current = "";
+        }
+      };
+      audio.onended = () => {
+        releaseAudio();
+        setPiperStatus("ready");
         finish();
       };
+      audio.onplay = () => {
+        setPiperStatus("ready");
+        setMessage("Falando com a voz Faber");
+      };
+      audio.onerror = () => {
+        releaseAudio();
+        playNativeFallback("Falando com a voz do aparelho porque o Piper não tocou");
+      };
       setMessage("Falando com a voz Faber");
-      source.start();
+      await audio.play();
     } catch (piperFailure) {
       if (requestId !== speechRequestRef.current) return;
-      try {
-        activePiperSourceRef.current?.stop();
-      } catch {
-        // A fonte já havia terminado.
+      activePiperAudioRef.current?.pause();
+      activePiperAudioRef.current = null;
+      if (activePiperAudioUrlRef.current) {
+        URL.revokeObjectURL(activePiperAudioUrlRef.current);
+        activePiperAudioUrlRef.current = "";
       }
-      activePiperSourceRef.current = null;
       setPiperError(
         piperFailure instanceof Error
           ? piperFailure.message
@@ -940,7 +1037,7 @@ export function VoiceApp() {
       );
       playNativeFallback();
     }
-  }, [ensureOutputAudioContext, updatePiperProgress]);
+  }, [piperStatus, unlockAudioOutput, updatePiperProgress]);
 
   const prepareFaberVoice = async () => {
     setPiperError("");
@@ -1037,13 +1134,14 @@ export function VoiceApp() {
 
   const stopSpeaking = () => {
     speechRequestRef.current += 1;
-    try {
-      activePiperSourceRef.current?.stop();
-    } catch {
-      // A fonte já havia terminado.
+    activePiperAudioRef.current?.pause();
+    activePiperAudioRef.current = null;
+    if (activePiperAudioUrlRef.current) {
+      URL.revokeObjectURL(activePiperAudioUrlRef.current);
+      activePiperAudioUrlRef.current = "";
     }
-    activePiperSourceRef.current = null;
     window.speechSynthesis?.cancel();
+    activeNativeUtteranceRef.current = null;
     isAppSpeakingRef.current = false;
     setIsSpeaking(false);
     setMessage("Pronto para ouvir");
@@ -1051,7 +1149,7 @@ export function VoiceApp() {
 
   const startListening = async () => {
     if (isAppSpeakingRef.current) return;
-    ensureOutputAudioContext();
+    unlockAudioOutput();
     setError("");
     setCorrectionSaved(false);
     setPendingCorrectionAudio(null);
@@ -1086,6 +1184,10 @@ export function VoiceApp() {
         if (event.data.size) conversationChunksRef.current.push(event.data);
       };
       recorder.onstop = async () => {
+        if (conversationTimeoutRef.current !== null) {
+          window.clearTimeout(conversationTimeoutRef.current);
+          conversationTimeoutRef.current = null;
+        }
         const durationMs = Math.max(
           0,
           new Date().getTime() - conversationStartedAtRef.current,
@@ -1254,6 +1356,12 @@ export function VoiceApp() {
       };
       conversationStartedAtRef.current = new Date().getTime();
       recorder.start();
+      conversationTimeoutRef.current = window.setTimeout(() => {
+        setMessage("Turno de 28 segundos concluído; processando a fala…");
+        recognitionRef.current?.stop();
+        if (recorder.state === "recording") recorder.stop();
+        setIsListening(false);
+      }, 28_000);
     } catch {
       setError("Não consegui acessar o microfone. Verifique a permissão do navegador.");
       return;
@@ -2040,19 +2148,28 @@ export function VoiceApp() {
                 ) : null}
                 {piperError ? <small className="piper-error">{piperError}</small> : null}
               </div>
-              <button
-                className="piper-download-button"
-                onClick={prepareFaberVoice}
-                disabled={piperStatus === "downloading" || piperStatus === "generating" || piperStatus === "ready"}
-              >
-                {piperStatus === "ready" ? (
-                  <><Check size={17} /> Voz pronta</>
-                ) : piperStatus === "downloading" ? (
-                  <><RefreshCw size={17} /> Baixando…</>
-                ) : (
-                  <><Download size={17} /> Baixar voz</>
-                )}
-              </button>
+              <div className="piper-actions">
+                <button
+                  className="piper-test-button"
+                  onClick={() => speak("Teste de áudio da Clara.")}
+                  disabled={isSpeaking}
+                >
+                  <Play size={16} fill="currentColor" /> Testar áudio agora
+                </button>
+                <button
+                  className="piper-download-button"
+                  onClick={prepareFaberVoice}
+                  disabled={piperStatus === "downloading" || piperStatus === "generating" || piperStatus === "ready"}
+                >
+                  {piperStatus === "ready" ? (
+                    <><Check size={17} /> Voz pronta</>
+                  ) : piperStatus === "downloading" ? (
+                    <><RefreshCw size={17} /> Baixando…</>
+                  ) : (
+                    <><Download size={17} /> Baixar voz</>
+                  )}
+                </button>
+              </div>
             </article>
 
             <section className="lower-grid">

@@ -15,6 +15,7 @@ test("is configured as a standard Next.js app for Netlify", async () => {
   assert.doesNotMatch(packageJson, /vinext|wrangler|cloudflare/);
   assert.match(netlifyConfig, /command = "npm run build"/);
   assert.match(netlifyConfig, /publish = "\.next"/);
+  assert.match(netlifyConfig, /Cache-Control = "no-cache, no-store, must-revalidate"/);
   assert.match(
     netlifyConfig,
     /Permissions-Policy = "microphone=\(self\), on-device-speech-recognition=\(self\)"/,
@@ -37,11 +38,14 @@ test("ships a complete installable offline mode", async () => {
   assert.match(transcription, /local-transcription\.worker\.js/);
   assert.match(worker, /onnx-community\/whisper-tiny/);
   assert.match(worker, /language: "portuguese"/);
+  assert.match(worker, /chunk_length_s: 28/);
   assert.match(worker, /ort-wasm-simd-threaded\.jsep\.mjs/);
   assert.match(worker, /ort-wasm-simd-threaded\.jsep\.wasm/);
   assert.match(offlineSupport, /serviceWorker\.register\("\/sw\.js"/);
   assert.match(serviceWorker, /CACHE_URLS/);
   assert.match(serviceWorker, /request\.mode === "navigate"/);
+  assert.match(serviceWorker, /clara-offline-v3/);
+  assert.match(serviceWorker, /mustRefresh/);
   assert.match(manifest, /"display": "standalone"/);
 });
 
@@ -55,6 +59,8 @@ test("ships the local Piper Faber Brazilian voice", async () => {
 
   assert.match(source, /Voz neural \{PIPER_VOICE_NAME\}/);
   assert.match(source, /synthesizeWithPiper/);
+  assert.match(source, /new Audio\(audioUrl\)/);
+  assert.match(source, /Testar áudio agora/);
   assert.match(piperClient, /pt_BR-faber-medium\.onnx/);
   assert.match(piperClient, /piper-voice\.worker\.js/);
   assert.match(piperWorker, /Trelis\/piper-pt-br-faber-medium/);
