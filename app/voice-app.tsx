@@ -73,6 +73,7 @@ import {
   extractVoiceSignature,
   identifyEnrolledSpeaker,
   matchLocalVoiceProfile,
+  matchTrainedWordsInUtterance,
 } from "./local-voice-matcher";
 import {
   appleAuthProvider,
@@ -110,6 +111,7 @@ import {
   collapseRecognitionRepetitions,
 } from "./transcription-repetition";
 import {
+  choosePersonalizedRecognition,
   correctWithTrainedWords,
   tokenizeTrainingPhrase,
 } from "./word-training";
@@ -1039,6 +1041,9 @@ export function VoiceApp() {
   const localVoiceTemplateCount = trainingSamples.filter(
     (sample) => sample.voiceSignature?.length,
   ).length;
+  const trainedWordTemplateCount = trainingSamples.filter(
+    (sample) => sample.source === "word" && sample.voiceSignature?.length,
+  ).length;
   const voiceSync = voiceSyncProgress(trainingSamples);
 
   useEffect(() => {
@@ -1546,6 +1551,7 @@ export function VoiceApp() {
 
         let topTranscript = browserTopTranscript.trim();
         let contextualTranscript = browserContextualTranscript.trim();
+        let localTranscript = "";
         let usedLocalTranscription = false;
 
         if (localTranscriptionReady) {
@@ -1556,9 +1562,7 @@ export function VoiceApp() {
               updateOfflineTranscriptionProgress,
             );
             if (localText) {
-              topTranscript = localText;
-              contextualTranscript = localText;
-              usedLocalTranscription = true;
+              localTranscript = localText;
             }
           } catch (localError) {
             if (isLocalDecodingFailure(localError)) {
@@ -1574,6 +1578,22 @@ export function VoiceApp() {
               );
             }
           }
+        }
+
+        const personalizedCandidate = choosePersonalizedRecognition(
+          [
+            { text: contextualTranscript, source: "browser-context" as const },
+            { text: topTranscript, source: "browser" as const },
+            { text: localTranscript, source: "local-whisper" as const },
+          ].filter((candidate) => !isNonSpeechTranscript(candidate.text)),
+          trainedWordVocabulary,
+          recognitionVocabulary,
+        );
+        if (personalizedCandidate) {
+          topTranscript = personalizedCandidate.text;
+          contextualTranscript = personalizedCandidate.text;
+          usedLocalTranscription =
+            personalizedCandidate.source === "local-whisper";
         }
 
         topTranscript = collapseRecognitionRepetitions(topTranscript);
@@ -1626,6 +1646,26 @@ export function VoiceApp() {
             trainedWordVocabulary,
           ),
         );
+        let usedVoiceProfile = false;
+        if (
+          trainedWordTemplateCount >= 2 &&
+          tokenizeTrainingPhrase(recognizedText).length >= 2
+        ) {
+          setMessage("Aplicando suas palavras treinadas; o microfone continua ativo…");
+          try {
+            const wordMatch = await matchTrainedWordsInUtterance(
+              recordedAudio,
+              recognizedText,
+              trainingSamples.filter((sample) => sample.source === "word"),
+            );
+            if (wordMatch?.matchedWords) {
+              recognizedText = collapseRecognitionRepetitions(wordMatch.text);
+              usedVoiceProfile = true;
+            }
+          } catch {
+            // O texto combinado do navegador e do Whisper permanece disponível.
+          }
+        }
         let finalText = recognizedText
           ? applyLearnedCorrection(
               recognizedText,
@@ -1633,13 +1673,12 @@ export function VoiceApp() {
               recognitionVocabulary,
             )
           : "";
-        let usedVoiceProfile = false;
 
         if (localVoiceTemplateCount > 0) {
           setMessage("Comparando com suas amostras; o microfone continua ativo…");
           try {
             const acousticTemplates =
-              tokenizeTrainingPhrase(recognizedText).length <= 2
+              tokenizeTrainingPhrase(recognizedText).length <= 1
                 ? trainingSamples
                 : trainingSamples.filter((sample) => sample.source !== "word");
             const match = await matchLocalVoiceProfile(
@@ -1733,7 +1772,7 @@ export function VoiceApp() {
       conversationStartedAtRef.current = Date.now();
       recorder.start(8_000);
 
-      if (useLocalRecognition) {
+      if (!Recognition) {
         recognitionRef.current = null;
         setIsListening(true);
         setMessage("Microfone contínuo ativo; toque novamente para parar");
@@ -2172,6 +2211,21 @@ export function VoiceApp() {
         setTrainingSamples((samples) => [saved, ...samples]);
         setTrainingCount((count) => count + 1);
         if (recordingMode === "words") {
+          const examplesForWord =
+            trainingSamples.filter(
+              (sample) =>
+                sample.source === "word" &&
+                normalize(sample.phrase) === normalize(target),
+            ).length + 1;
+          if (examplesForWord < 2) {
+            setTrainingMessage(
+              `Primeira amostra salva. Fale “${target}” mais uma vez`,
+            );
+            stream.getTracks().forEach((track) => track.stop());
+            streamRef.current = null;
+            void syncAllPendingSamples();
+            return;
+          }
           const completed = new Set([
             ...completedTrainingWordIndexes,
             recordedWordIndex,
@@ -2487,7 +2541,12 @@ export function VoiceApp() {
                   <span className={`status-dot ${isListening ? "live" : ""}`} />
                   <span aria-live="polite">{message}</span>
                   {(corrections.length > 0 || trainingCount > 0) && (
-                    <span className="learned-count"><WandSparkles size={14} /> perfil adaptativo ativo</span>
+                    <span className="learned-count">
+                      <WandSparkles size={14} /> perfil adaptativo ativo
+                      {trainedWordVocabulary.length
+                        ? ` · ${trainedWordVocabulary.length} palavras`
+                        : ""}
+                    </span>
                   )}
                 </div>
 
@@ -2999,7 +3058,7 @@ export function VoiceApp() {
                       </button>
                     ))}
                   </div>
-                  <p>A palavra em verde escuro é a que você deve falar agora. As concluídas ficam marcadas em verde claro.</p>
+                  <p>A palavra em verde escuro é a que você deve falar agora. Grave duas vezes; as concluídas ficam marcadas em verde claro.</p>
                 </section>
               ) : null}
 
@@ -3018,7 +3077,7 @@ export function VoiceApp() {
                     {isRecording
                       ? "Fale somente o item destacado e toque para salvar"
                       : trainingMode === "words"
-                        ? "Toque no microfone, fale uma palavra e salve"
+                        ? "Toque no microfone e grave cada palavra duas vezes"
                         : "Toque no microfone e leia a frase naturalmente"}
                   </span>
                 </div>

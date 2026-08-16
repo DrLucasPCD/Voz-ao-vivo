@@ -81,9 +81,12 @@ test("ships personalized recognition without a paid API", async () => {
 
   assert.match(source, /Reconhecimento personalizado gratuito/);
   assert.match(source, /matchLocalVoiceProfile/);
+  assert.match(source, /matchTrainedWordsInUtterance/);
+  assert.match(source, /choosePersonalizedRecognition/);
   assert.match(source, /assinaturas acústicas/);
   assert.match(matcherSource, /extractVoiceSignature/);
   assert.match(matcherSource, /compareVoiceSignatures/);
+  assert.match(matcherSource, /decodeTrainedWordSignatures/);
   assert.doesNotMatch(source, /OpenAI|requestPersonalizedTranscription/);
   assert.doesNotMatch(netlifyConfig, /\[functions\]/);
   assert.doesNotMatch(exampleEnv, /OPENAI|API_KEY/);
@@ -122,6 +125,8 @@ test("ships the clinical consultation voice workflow", async () => {
   assert.match(source, /Agora fale:/);
   assert.match(source, /source: recordingMode === "words" \? "word" : "guided"/);
   assert.match(source, /correctWithTrainedWords/);
+  assert.match(source, /grave cada palavra duas vezes/i);
+  assert.match(source, /if \(!Recognition\)/);
   assert.match(source, /Identificação automática de quem está falando/);
   assert.match(source, /Equipe, colega ou preceptoria/);
   assert.match(source, /prioritizeQuickQuestions/);

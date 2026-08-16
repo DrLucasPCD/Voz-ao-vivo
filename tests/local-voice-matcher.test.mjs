@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   compareVoiceSignatures,
+  decodeTrainedWordSignatures,
   identifyEnrolledSpeaker,
 } from "../app/local-voice-matcher.ts";
 
@@ -42,4 +43,23 @@ test("identifies the enrolled owner separately from another voice", () => {
   assert.equal(owner.ready, true);
   assert.equal(owner.isOwner, true);
   assert.equal(anotherVoice.isOwner, false);
+});
+
+test("uses trained acoustic words inside a new sentence", () => {
+  const dor = Array.from({ length: 64 * 9 }, (_, index) => Math.sin(index / 7));
+  const peito = Array.from({ length: 64 * 9 }, (_, index) => Math.cos(index / 3));
+  const result = decodeTrainedWordSignatures(
+    "Cor jeito?",
+    [
+      { features: dor, durationMs: 480, speakerFingerprint: [] },
+      { features: peito, durationMs: 620, speakerFingerprint: [] },
+    ],
+    [
+      { phrase: "dor", voiceSignature: dor, durationMs: 480 },
+      { phrase: "peito", voiceSignature: peito, durationMs: 620 },
+    ],
+  );
+
+  assert.equal(result?.text, "Dor peito?");
+  assert.equal(result?.matchedWords, 2);
 });

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  choosePersonalizedRecognition,
   correctWithTrainedWords,
   tokenizeTrainingPhrase,
 } from "../app/word-training.ts";
@@ -32,4 +33,18 @@ test("does not replace unrelated short words", () => {
     correctWithTrainedWords("dor no pé", ["de", "na", "peito"]),
     "dor no pé",
   );
+});
+
+test("combines browser and local recognition using the trained context", () => {
+  const selected = choosePersonalizedRecognition(
+    [
+      { text: "Você sente dor no peito", source: "browser-context" },
+      { text: "Você sempre dorme direito", source: "local-whisper" },
+    ],
+    ["você", "sente", "dor", "peito"],
+    ["Você sente dor no peito?"],
+  );
+
+  assert.equal(selected?.text, "Você sente dor no peito");
+  assert.equal(selected?.source, "browser-context");
 });

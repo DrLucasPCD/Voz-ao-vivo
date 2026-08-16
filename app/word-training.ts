@@ -73,3 +73,64 @@ export function correctWithTrainedWords(value: string, trainedWords: string[]) {
     return preserveCase(bestWord);
   });
 }
+
+export type RecognitionCandidate = {
+  text: string;
+  source: "browser" | "browser-context" | "local-whisper";
+};
+
+export function choosePersonalizedRecognition(
+  candidates: RecognitionCandidate[],
+  trainedWords: string[],
+  contextualPhrases: string[],
+) {
+  const unique = Array.from(
+    new Map(
+      candidates
+        .map((candidate) => ({ ...candidate, text: candidate.text.trim() }))
+        .filter((candidate) => candidate.text)
+        .map((candidate) => [normalizeWord(candidate.text), candidate]),
+    ).values(),
+  );
+  if (!unique.length) return null;
+
+  const normalizedVocabulary = trainedWords
+    .map(normalizeWord)
+    .filter(Boolean);
+  const normalizedContexts = contextualPhrases
+    .map((phrase) => normalizeWord(phrase.trim()))
+    .filter(Boolean);
+  const sourcePrior: Record<RecognitionCandidate["source"], number> = {
+    "browser-context": 0.09,
+    browser: 0.06,
+    "local-whisper": 0,
+  };
+
+  return unique
+    .map((candidate) => {
+      const candidateWords = tokenizeTrainingPhrase(candidate.text);
+      const wordSupport = candidateWords.length && normalizedVocabulary.length
+        ? candidateWords.reduce((sum, word) => {
+            const best = normalizedVocabulary.reduce(
+              (highest, trained) =>
+                Math.max(highest, wordSimilarity(word, trained)),
+              0,
+            );
+            return sum + (best >= 0.68 ? best : 0);
+          }, 0) / candidateWords.length
+        : 0;
+      const normalizedCandidate = normalizeWord(candidate.text);
+      const contextSupport = normalizedContexts.reduce(
+        (highest, context) =>
+          Math.max(highest, wordSimilarity(normalizedCandidate, context)),
+        0,
+      );
+      const score =
+        contextSupport * 0.58 +
+        wordSupport * 0.27 +
+        sourcePrior[candidate.source] +
+        Math.min(0.04, candidateWords.length * 0.006);
+      return { ...candidate, score };
+    })
+    .sort((left, right) => right.score - left.score)[0];
+}
