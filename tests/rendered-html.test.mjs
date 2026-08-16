@@ -118,6 +118,8 @@ test("ships the clinical consultation voice workflow", async () => {
   assert.match(source, /A gravação só termina quando você tocar neste botão novamente/);
   assert.match(source, /Emite sua fala sem interromper o microfone/);
   assert.match(source, /isLocalDecodingFailure/);
+  assert.match(source, /hasUsableBrowserTranscript/);
+  assert.match(source, /usando o reconhecimento válido do navegador/);
   assert.match(source, /isNonSpeechTranscript/);
   assert.match(source, /Trecho descartado sem reprodução/);
   assert.match(source, /Palavra por palavra/);

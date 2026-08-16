@@ -103,6 +103,7 @@ import {
   registerOfflineServiceWorker,
 } from "./offline-support";
 import {
+  hasUsableBrowserTranscript,
   isLocalDecodingFailure,
   isNonSpeechTranscript,
 } from "./transcription-filter";
@@ -1566,11 +1567,21 @@ export function VoiceApp() {
             }
           } catch (localError) {
             if (isLocalDecodingFailure(localError)) {
-              setError("Reconhecimento local: Decoding failed. Trecho descartado sem reprodução.");
-              setMessage("Falha de decodificação ignorada; nenhum áudio será emitido");
-              return;
-            }
-            if (!navigator.onLine || !topTranscript) {
+              if (
+                !hasUsableBrowserTranscript(
+                  topTranscript,
+                  contextualTranscript,
+                )
+              ) {
+                setError("Reconhecimento local: Decoding failed. Trecho descartado sem reprodução.");
+                setMessage("Falha de decodificação ignorada; nenhum áudio será emitido");
+                return;
+              }
+              setError("");
+              setMessage(
+                "Whisper local oscilou; usando o reconhecimento válido do navegador",
+              );
+            } else if (!navigator.onLine || !topTranscript) {
               setError(
                 localError instanceof Error
                   ? `Reconhecimento local: ${localError.message}`

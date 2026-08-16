@@ -42,3 +42,9 @@ export function isLocalDecodingFailure(error: unknown) {
     normalizedMessage.includes("decode failed")
   );
 }
+
+export function hasUsableBrowserTranscript(...values: string[]) {
+  return values.some(
+    (value) => Boolean(value.trim()) && !isNonSpeechTranscript(value),
+  );
+}
