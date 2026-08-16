@@ -4,6 +4,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocFromServer,
   onSnapshot,
   orderBy,
   query,
@@ -68,6 +69,29 @@ export async function uploadVoiceSample(uid: string, sample: UploadableSample) {
     cloudSample,
   );
   return cloudSample;
+}
+
+export async function verifyCloudVoiceSample(
+  uid: string,
+  expected: Pick<
+    CloudVoiceSample,
+    "cloudId" | "phrase" | "mimeType" | "createdAt" | "source"
+  > & { audioSize: number },
+) {
+  const snapshot = await getDocFromServer(
+    doc(firebaseDb, "users", uid, "voiceSamples", expected.cloudId),
+  );
+  if (!snapshot.exists()) return false;
+  const stored = snapshot.data() as CloudVoiceSample;
+  return (
+    stored.cloudId === expected.cloudId &&
+    stored.phrase === expected.phrase &&
+    stored.mimeType === expected.mimeType &&
+    stored.createdAt === expected.createdAt &&
+    stored.source === expected.source &&
+    stored.audioBytes instanceof Bytes &&
+    stored.audioBytes.toUint8Array().byteLength === expected.audioSize
+  );
 }
 
 export function subscribeToVoiceSamples(

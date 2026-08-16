@@ -39,6 +39,13 @@ Sem login, as correções e gravações ficam somente no navegador. Ao entrar co
 Google ou Apple, o perfil é sincronizado no projeto Firebase `voz-ao-vivo`, em
 caminhos isolados pelo identificador da conta.
 
+Cada amostra permanece em uma fila persistente no IndexedDB até o Firestore
+confirmar o documento e o tamanho do áudio gravado. Falhas recebem novas
+tentativas quando a conexão volta e a interface mostra quantas amostras estão
+confirmadas ou pendentes. Em outro aparelho, as amostras da conta são baixadas
+para o IndexedDB local durante a primeira sincronização, permitindo reutilizar
+o perfil offline depois desse preparo inicial.
+
 ## Executar localmente
 
 Requer Node.js 22 ou mais recente.

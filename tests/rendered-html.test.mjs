@@ -176,7 +176,13 @@ test("ships private free-tier Firebase voice-profile synchronization", async () 
   assert.match(source, /redirect_uri_mismatch/);
   assert.match(source, /Google Auth Platform/);
   assert.match(source, /syncTrainingSample/);
+  assert.match(source, /syncAllPendingSamples/);
+  assert.match(source, /persistRemoteTrainingSamples/);
+  assert.match(source, /Perfil totalmente sincronizado/);
+  assert.match(source, /Sincronizar agora/);
   assert.match(cloudSource, /uploadVoiceSample/);
+  assert.match(cloudSource, /verifyCloudVoiceSample/);
+  assert.match(cloudSource, /getDocFromServer/);
   assert.match(cloudSource, /subscribeToVoiceSamples/);
   assert.match(cloudSource, /Bytes\.fromUint8Array/);
   assert.match(cloudSource, /MAX_SYNCED_AUDIO_BYTES/);

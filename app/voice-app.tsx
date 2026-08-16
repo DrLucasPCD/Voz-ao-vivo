@@ -66,6 +66,7 @@ import {
   saveCloudCorrections,
   subscribeToVoiceSamples,
   uploadVoiceSample,
+  verifyCloudVoiceSample,
   type CloudVoiceSample,
 } from "./cloud-voice-profile";
 import {
@@ -112,6 +113,7 @@ import {
   correctWithTrainedWords,
   tokenizeTrainingPhrase,
 } from "./word-training";
+import { retryDelayMs, voiceSyncProgress } from "./voice-sync-state";
 
 type RecognitionAlternative = { transcript: string; confidence: number };
 
@@ -178,6 +180,9 @@ type TrainingSample = {
   audioBytes?: CloudVoiceSample["audioBytes"];
   synced?: boolean;
   firestoreAudioSynced?: boolean;
+  syncAttempts?: number;
+  lastSyncAttemptAt?: string;
+  lastSyncError?: string;
 };
 
 const normalize = (value: string) =>
@@ -317,6 +322,62 @@ async function updateTrainingSample(sample: TrainingSample) {
     transaction.onerror = () => reject(transaction.error);
   });
   db.close();
+}
+
+async function persistRemoteTrainingSamples(remoteSamples: CloudVoiceSample[]) {
+  const localSamples = await getTrainingSamples();
+  const byCloudId = new Map(
+    localSamples
+      .filter((sample) => sample.cloudId)
+      .map((sample) => [sample.cloudId as string, sample]),
+  );
+
+  for (const remote of remoteSamples) {
+    const existing =
+      byCloudId.get(remote.cloudId) ??
+      localSamples.find(
+        (sample) =>
+          sample.createdAt === remote.createdAt &&
+          sample.phrase === remote.phrase &&
+          sample.mimeType === remote.mimeType,
+      );
+    const blob =
+      existing?.blob ??
+      (await downloadVoiceSample({
+        audioBytes: remote.audioBytes,
+        mimeType: remote.mimeType,
+      }));
+    const persisted: TrainingSample = {
+      ...(existing?.id !== undefined ? { id: existing.id } : {}),
+      phrase: remote.phrase,
+      blob,
+      mimeType: remote.mimeType,
+      createdAt: remote.createdAt,
+      source: remote.source,
+      cloudId: remote.cloudId,
+      synced: true,
+      firestoreAudioSynced: true,
+      syncAttempts: 0,
+      ...(remote.heard ? { heard: remote.heard } : {}),
+      ...(remote.durationMs ? { durationMs: remote.durationMs } : {}),
+      ...(remote.voiceSignature
+        ? { voiceSignature: remote.voiceSignature }
+        : {}),
+      ...(remote.speakerFingerprint
+        ? { speakerFingerprint: remote.speakerFingerprint }
+        : {}),
+    };
+    let stored: TrainingSample;
+    if (existing) {
+      await updateTrainingSample(persisted);
+      stored = persisted;
+    } else {
+      stored = await storeTrainingSample(persisted);
+    }
+    byCloudId.set(remote.cloudId, stored);
+  }
+
+  return getTrainingSamples();
 }
 
 async function removeTrainingSample(id: number) {
@@ -527,6 +588,133 @@ export function VoiceApp() {
   const recordingChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const trainingStartedAtRef = useRef(0);
+  const syncInFlightRef = useRef(new Set<string>());
+  const syncSweepRunningRef = useRef(false);
+
+  const syncTrainingSample = useCallback(async (sample: TrainingSample) => {
+    if (!user || !sample.blob || sample.firestoreAudioSynced) return sample;
+    const sampleKey =
+      sample.cloudId ??
+      (sample.id !== undefined
+        ? `local-${sample.id}`
+        : `${sample.createdAt}-${sample.phrase}`);
+    if (syncInFlightRef.current.has(sampleKey)) return sample;
+
+    syncInFlightRef.current.add(sampleKey);
+    setSyncStatus("syncing");
+    let attemptedCloudId = sample.cloudId;
+    try {
+      const cloudSample = await uploadVoiceSample(user.uid, {
+        cloudId: sample.cloudId,
+        phrase: sample.phrase,
+        heard: sample.heard,
+        blob: sample.blob,
+        mimeType: sample.mimeType,
+        createdAt: sample.createdAt,
+        durationMs: sample.durationMs,
+        voiceSignature: sample.voiceSignature,
+        speakerFingerprint: sample.speakerFingerprint,
+        source: sample.source ?? "guided",
+      });
+      attemptedCloudId = cloudSample.cloudId;
+      const confirmed = await verifyCloudVoiceSample(user.uid, {
+        cloudId: cloudSample.cloudId,
+        phrase: cloudSample.phrase,
+        mimeType: cloudSample.mimeType,
+        createdAt: cloudSample.createdAt,
+        source: cloudSample.source,
+        audioSize: sample.blob.size,
+      });
+      if (!confirmed) {
+        throw new Error("O Firestore ainda não confirmou a amostra enviada.");
+      }
+
+      const updated: TrainingSample = {
+        ...sample,
+        cloudId: cloudSample.cloudId,
+        synced: true,
+        firestoreAudioSynced: true,
+        syncAttempts: 0,
+        lastSyncAttemptAt: new Date().toISOString(),
+        lastSyncError: undefined,
+      };
+      await updateTrainingSample(updated);
+      setTrainingSamples((samples) => {
+        const merged = mergeTrainingSamples(
+          samples.map((item) =>
+            item.id === updated.id ? updated : item,
+          ),
+          [cloudSample],
+        );
+        setSyncStatus(
+          voiceSyncProgress(merged).pending ? "syncing" : "synced",
+        );
+        return merged;
+      });
+      return updated;
+    } catch (syncError) {
+      const failed: TrainingSample = {
+        ...sample,
+        ...(attemptedCloudId ? { cloudId: attemptedCloudId } : {}),
+        synced: false,
+        firestoreAudioSynced: false,
+        syncAttempts: (sample.syncAttempts ?? 0) + 1,
+        lastSyncAttemptAt: new Date().toISOString(),
+        lastSyncError:
+          syncError instanceof Error
+            ? syncError.message
+            : "Falha desconhecida na sincronização",
+      };
+      await updateTrainingSample(failed);
+      setTrainingSamples((samples) =>
+        samples.map((item) => (item.id === failed.id ? failed : item)),
+      );
+      setSyncStatus("error");
+      return failed;
+    } finally {
+      syncInFlightRef.current.delete(sampleKey);
+    }
+  }, [user]);
+
+  const syncAllPendingSamples = useCallback(async () => {
+    if (!user || !navigator.onLine || syncSweepRunningRef.current) return;
+    syncSweepRunningRef.current = true;
+    try {
+      const localSamples = await getTrainingSamples();
+      const pendingSamples = localSamples.filter(
+        (sample) => sample.blob && !sample.firestoreAudioSynced,
+      );
+      if (!pendingSamples.length) {
+        setSyncStatus("synced");
+        return;
+      }
+
+      setSyncStatus("syncing");
+      for (const pendingSample of pendingSamples) {
+        let current = pendingSample;
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          current = await syncTrainingSample(current);
+          if (current.firestoreAudioSynced) break;
+          if (attempt < 3) {
+            await new Promise((resolve) =>
+              window.setTimeout(resolve, retryDelayMs(attempt)),
+            );
+          }
+        }
+      }
+
+      const refreshed = await getTrainingSamples();
+      setTrainingSamples(refreshed);
+      setTrainingCount(refreshed.length);
+      setSyncStatus(
+        refreshed.some((sample) => sample.blob && !sample.firestoreAudioSynced)
+          ? "error"
+          : "synced",
+      );
+    } finally {
+      syncSweepRunningRef.current = false;
+    }
+  }, [syncTrainingSample, user]);
 
   useEffect(() => {
     return onAuthStateChanged(firebaseAuth, (currentUser) => {
@@ -724,12 +912,19 @@ export function VoiceApp() {
       user.uid,
       (remoteSamples) => {
         if (!active) return;
-        setTrainingSamples((existing) => {
-          const merged = mergeTrainingSamples(existing, remoteSamples);
-          setTrainingCount(merged.length);
-          return merged;
-        });
-        setSyncStatus("synced");
+        setSyncStatus("syncing");
+        void persistRemoteTrainingSamples(remoteSamples)
+          .then((localSamples) => {
+            if (!active) return;
+            const merged = mergeTrainingSamples(localSamples, remoteSamples);
+            const progress = voiceSyncProgress(merged);
+            setTrainingSamples(merged);
+            setTrainingCount(merged.length);
+            setSyncStatus(progress.pending ? "syncing" : "synced");
+          })
+          .catch(() => {
+            if (active) setSyncStatus("error");
+          });
       },
       () => {
         if (active) setSyncStatus("error");
@@ -755,35 +950,7 @@ export function VoiceApp() {
         );
         await saveCloudCorrections(user.uid, mergedCorrections);
 
-        const localSamples = await getTrainingSamples();
-        for (const sample of localSamples) {
-          if (!active || sample.firestoreAudioSynced || !sample.blob) continue;
-          const cloudSample = await uploadVoiceSample(user.uid, {
-            cloudId: sample.cloudId,
-            phrase: sample.phrase,
-            heard: sample.heard,
-            blob: sample.blob,
-            mimeType: sample.mimeType,
-            createdAt: sample.createdAt,
-            durationMs: sample.durationMs,
-            voiceSignature: sample.voiceSignature,
-            speakerFingerprint: sample.speakerFingerprint,
-            source: sample.source ?? "guided",
-          });
-          const updated = {
-            ...sample,
-            cloudId: cloudSample.cloudId,
-            synced: true,
-            firestoreAudioSynced: true,
-          };
-          await updateTrainingSample(updated);
-          setTrainingSamples((samples) =>
-            samples.map((item) =>
-              item.id === updated.id ? updated : item,
-            ),
-          );
-        }
-        if (active) setSyncStatus("synced");
+        await syncAllPendingSamples();
       } catch {
         if (active) setSyncStatus("error");
       }
@@ -794,7 +961,21 @@ export function VoiceApp() {
       active = false;
       unsubscribe();
     };
-  }, [user]);
+  }, [syncAllPendingSamples, user]);
+
+  useEffect(() => {
+    if (!user || !isOnline) return;
+    const initialRetry = window.setTimeout(() => {
+      void syncAllPendingSamples();
+    }, 500);
+    const retryInterval = window.setInterval(() => {
+      void syncAllPendingSamples();
+    }, 30_000);
+    return () => {
+      window.clearTimeout(initialRetry);
+      window.clearInterval(retryInterval);
+    };
+  }, [isOnline, syncAllPendingSamples, user]);
 
   useEffect(() => {
     return () => {
@@ -853,6 +1034,17 @@ export function VoiceApp() {
   const localVoiceTemplateCount = trainingSamples.filter(
     (sample) => sample.voiceSignature?.length,
   ).length;
+  const voiceSync = voiceSyncProgress(trainingSamples);
+
+  useEffect(() => {
+    if (!user || voiceSync.pending === 0) return;
+    const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = true;
+    };
+    window.addEventListener("beforeunload", warnBeforeLeaving);
+    return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
+  }, [user, voiceSync.pending]);
 
   const handleSignIn = async (
     provider: AuthProvider,
@@ -920,6 +1112,14 @@ export function VoiceApp() {
   };
 
   const handleSignOut = async () => {
+    if (
+      voiceSync.pending > 0 &&
+      !window.confirm(
+        `${voiceSync.pending} amostra${voiceSync.pending === 1 ? " ainda não foi confirmada" : "s ainda não foram confirmadas"} na nuvem. Elas continuarão salvas neste aparelho. Deseja sair mesmo assim?`,
+      )
+    ) {
+      return;
+    }
     try {
       await signOut(firebaseAuth);
       const localSamples = await getTrainingSamples();
@@ -928,45 +1128,6 @@ export function VoiceApp() {
       setSyncStatus("local");
     } catch {
       setError("Não consegui sair da conta. Tente novamente.");
-    }
-  };
-
-  const syncTrainingSample = async (sample: TrainingSample) => {
-    if (!user || !sample.blob || sample.firestoreAudioSynced) return sample;
-    setSyncStatus("syncing");
-    try {
-      const cloudSample = await uploadVoiceSample(user.uid, {
-        cloudId: sample.cloudId,
-        phrase: sample.phrase,
-        heard: sample.heard,
-        blob: sample.blob,
-        mimeType: sample.mimeType,
-        createdAt: sample.createdAt,
-        durationMs: sample.durationMs,
-        voiceSignature: sample.voiceSignature,
-        speakerFingerprint: sample.speakerFingerprint,
-        source: sample.source ?? "guided",
-      });
-      const updated = {
-        ...sample,
-        cloudId: cloudSample.cloudId,
-        synced: true,
-        firestoreAudioSynced: true,
-      };
-      await updateTrainingSample(updated);
-      setTrainingSamples((samples) =>
-        mergeTrainingSamples(
-          samples.map((item) =>
-            item.id === updated.id ? updated : item,
-          ),
-          [cloudSample],
-        ),
-      );
-      setSyncStatus("synced");
-      return updated;
-    } catch {
-      setSyncStatus("error");
-      return sample;
     }
   };
 
@@ -1737,7 +1898,7 @@ export function VoiceApp() {
       setTrainingSamples((samples) => [saved, ...samples]);
       setTrainingCount((count) => count + 1);
       setPendingCorrectionAudio(null);
-      void syncTrainingSample(saved);
+      void syncAllPendingSamples();
     }
     setCorrectionSaved(true);
     setMessage(
@@ -2006,7 +2167,7 @@ export function VoiceApp() {
               : "Frase salva com segurança neste dispositivo",
           );
         }
-        void syncTrainingSample(saved);
+        void syncAllPendingSamples();
         stream.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
       };
@@ -2174,10 +2335,14 @@ export function VoiceApp() {
                 {syncStatus === "syncing" ? <RefreshCw size={15} /> : <Cloud size={15} />}
                 <span>
                   {syncStatus === "syncing"
-                    ? "Sincronizando…"
+                    ? voiceSync.total
+                      ? `Sincronizando ${voiceSync.synced}/${voiceSync.total}`
+                      : "Sincronizando…"
                     : syncStatus === "error"
-                      ? "Falha ao sincronizar"
-                      : "Perfil sincronizado"}
+                      ? `${voiceSync.pending} pendente${voiceSync.pending === 1 ? "" : "s"}`
+                      : voiceSync.total
+                        ? `Todas as ${voiceSync.total} na nuvem`
+                        : "Conta sincronizada"}
                 </span>
               </div>
               <button className="account-button subtle" onClick={handleSignOut} aria-label="Sair da conta">
@@ -2693,14 +2858,41 @@ export function VoiceApp() {
                 <span><i style={{ width: `${Math.min(100, (trainingCount / 40) * 100)}%` }} /></span>
                 <small>{trainingCount < 40 ? `Grave mais ${40 - trainingCount} para formar uma boa base inicial.` : "Sua base inicial está completa. Continue corrigindo durante o uso."}</small>
               </div>
-              <div className="privacy-box">
+              <div className={`privacy-box ${user ? `sync-${syncStatus}` : ""}`}>
                 {user ? <Cloud size={18} /> : <Check size={18} />}
-                <span>
-                  <strong>{user ? "Sincronização privada." : "Local por padrão."}</strong>{" "}
-                  {user
-                    ? "Suas amostras ficam protegidas pelo seu login e disponíveis nos seus dispositivos."
-                    : "Entre na sua conta para acessar suas amostras em outros dispositivos."}
-                </span>
+                <div>
+                  <strong>
+                    {user
+                      ? voiceSync.pending
+                        ? `${voiceSync.synced} de ${voiceSync.total} confirmadas na nuvem.`
+                        : voiceSync.total
+                          ? `Perfil totalmente sincronizado: ${voiceSync.total} de ${voiceSync.total}.`
+                          : "Conta pronta para sincronizar."
+                      : "Local por padrão."}
+                  </strong>
+                  <span>
+                    {user
+                      ? voiceSync.pending
+                        ? `${voiceSync.pending} amostra${voiceSync.pending === 1 ? " está" : "s estão"} segura${voiceSync.pending === 1 ? "" : "s"} neste aparelho e aguardando confirmação do Firestore.`
+                        : "As amostras foram verificadas no servidor e também ficam salvas neste aparelho para uso offline."
+                      : "Entre na sua conta para acessar suas amostras em outros dispositivos."}
+                  </span>
+                </div>
+                {user ? (
+                  <button
+                    className="sync-now-button"
+                    onClick={() => void syncAllPendingSamples()}
+                    disabled={!isOnline || syncStatus === "syncing" || voiceSync.pending === 0}
+                  >
+                    {syncStatus === "syncing" ? (
+                      <><RefreshCw size={14} /> Verificando…</>
+                    ) : voiceSync.pending ? (
+                      <><Cloud size={14} /> Sincronizar agora</>
+                    ) : (
+                      <><Check size={14} /> Tudo confirmado</>
+                    )}
+                  </button>
+                ) : null}
               </div>
             </div>
 

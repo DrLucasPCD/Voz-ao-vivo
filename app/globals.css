@@ -596,8 +596,13 @@ main.talk-main {
 .profile-progress > span { display: block; height: 8px; border-radius: 999px; overflow: hidden; background: #e2e5dd; }
 .profile-progress > span i { display: block; height: 100%; min-width: 3px; border-radius: inherit; background: var(--lime); transition: width .3s ease; }
 .profile-progress small { display: block; color: var(--muted); font-size: 11px; line-height: 1.4; margin-top: 8px; }
-.privacy-box { max-width: 430px; display: flex; align-items: flex-start; gap: 10px; padding: 14px 16px; border-radius: 13px; background: var(--mint); color: var(--green); font-size: 13px; line-height: 1.45; }
+.privacy-box { max-width: 430px; display: grid; grid-template-columns: auto 1fr; align-items: flex-start; gap: 8px 10px; padding: 14px 16px; border: 1px solid transparent; border-radius: 13px; background: var(--mint); color: var(--green); font-size: 13px; line-height: 1.45; }
 .privacy-box svg { flex: 0 0 auto; margin-top: 1px; }
+.privacy-box > div { display: grid; gap: 3px; }
+.privacy-box > div span { color: var(--muted); font-size: 11px; }
+.privacy-box.sync-error { border-color: #dfaaa3; background: #fff4f0; }
+.sync-now-button { grid-column: 2; width: fit-content; min-height: 34px; padding: 0 11px; border: 1px solid #93bcae; border-radius: 9px; background: white; color: var(--green); display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 10px; font-weight: 850; cursor: pointer; }
+.sync-now-button:disabled { opacity: .62; cursor: default; }
 .training-card { padding: 29px; box-shadow: var(--shadow); }
 .training-card.recording { border-color: #da8a7f; }
 .specialty-field { display: grid; gap: 8px; margin-bottom: 22px; }
