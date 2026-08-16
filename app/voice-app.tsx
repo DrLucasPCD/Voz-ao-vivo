@@ -104,6 +104,10 @@ import {
   isLocalDecodingFailure,
   isNonSpeechTranscript,
 } from "./transcription-filter";
+import {
+  correctWithTrainedWords,
+  tokenizeTrainingPhrase,
+} from "./word-training";
 
 type RecognitionAlternative = { transcript: string; confidence: number };
 
@@ -161,7 +165,7 @@ type TrainingSample = {
   blob?: Blob;
   mimeType: string;
   createdAt: string;
-  source?: "guided" | "correction";
+  source?: "guided" | "word" | "correction";
   heard?: string;
   durationMs?: number;
   voiceSignature?: number[];
@@ -500,12 +504,15 @@ export function VoiceApp() {
   const [selectedSpecialty, setSelectedSpecialty] = useState("Clínica geral");
   const [promptIndex, setPromptIndex] = useState(0);
   const [trainingPhrase, setTrainingPhrase] = useState(CLINICAL_PHRASES[0].text);
+  const [trainingMode, setTrainingMode] = useState<"words" | "phrase">("words");
+  const [trainingWordIndex, setTrainingWordIndex] = useState(0);
+  const [completedTrainingWordIndexes, setCompletedTrainingWordIndexes] = useState<number[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [trainingCount, setTrainingCount] = useState(0);
   const [trainingSamples, setTrainingSamples] = useState<TrainingSample[]>([]);
   const [isExporting, setIsExporting] = useState(false);
   const [latestRecordingUrl, setLatestRecordingUrl] = useState("");
-  const [trainingMessage, setTrainingMessage] = useState("Leia a frase no seu ritmo");
+  const [trainingMessage, setTrainingMessage] = useState("Comece pela palavra destacada");
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
@@ -787,6 +794,18 @@ export function VoiceApp() {
   }, [latestRecordingUrl]);
 
   const specialtyPhrases = phrasesForSpecialty(selectedSpecialty);
+  const trainingWords = tokenizeTrainingPhrase(trainingPhrase);
+  const currentTrainingWord = trainingWords[trainingWordIndex] ?? "";
+  const currentTrainingTarget =
+    trainingMode === "words" ? currentTrainingWord : trainingPhrase.trim();
+  const trainedWordVocabulary = Array.from(
+    new Set(
+      trainingSamples
+        .filter((sample) => sample.source === "word")
+        .map((sample) => sample.phrase.trim())
+        .filter(Boolean),
+    ),
+  );
   const patientContext = patientTurns.join(" ");
   const usedDoctorTexts = consultationTurns
     .filter((turn) => turn.speaker === "doctor")
@@ -1412,7 +1431,10 @@ export function VoiceApp() {
         setPendingCorrectionAudio(recordedAudio);
         pendingCorrectionDurationMsRef.current = durationMs;
 
-        let recognizedText = contextualTranscript || topTranscript;
+        let recognizedText = correctWithTrainedWords(
+          contextualTranscript || topTranscript,
+          trainedWordVocabulary,
+        );
         let finalText = recognizedText
           ? applyLearnedCorrection(
               recognizedText,
@@ -1425,9 +1447,13 @@ export function VoiceApp() {
         if (localVoiceTemplateCount > 0) {
           setMessage("Comparando com suas amostras; o microfone continua ativo…");
           try {
+            const acousticTemplates =
+              tokenizeTrainingPhrase(recognizedText).length <= 2
+                ? trainingSamples
+                : trainingSamples.filter((sample) => sample.source !== "word");
             const match = await matchLocalVoiceProfile(
               recordedAudio,
-              trainingSamples,
+              acousticTemplates,
             );
             if (match) {
               const textSupport = recognizedText
@@ -1859,7 +1885,9 @@ export function VoiceApp() {
     setSelectedSpecialty(specialtyName);
     setPromptIndex(0);
     setTrainingPhrase(nextPhrases[0].text);
-    setTrainingMessage("Leia a frase no seu ritmo");
+    setTrainingWordIndex(0);
+    setCompletedTrainingWordIndexes([]);
+    setTrainingMessage("Comece pela palavra destacada");
     setShowAllQuickQuestions(false);
     localStorage.setItem("clara-specialty", specialtyName);
   };
@@ -1868,10 +1896,34 @@ export function VoiceApp() {
     const next = (promptIndex + 1) % specialtyPhrases.length;
     setPromptIndex(next);
     setTrainingPhrase(specialtyPhrases[next].text);
-    setTrainingMessage("Leia a frase no seu ritmo");
+    setTrainingWordIndex(0);
+    setCompletedTrainingWordIndexes([]);
+    setTrainingMessage("Comece pela palavra destacada");
+  };
+
+  const changeTrainingMode = (nextMode: "words" | "phrase") => {
+    setTrainingMode(nextMode);
+    setTrainingWordIndex(0);
+    setCompletedTrainingWordIndexes([]);
+    setTrainingMessage(
+      nextMode === "words"
+        ? "Comece pela palavra destacada"
+        : "Leia a frase completa no seu ritmo",
+    );
+  };
+
+  const updateTrainingPhrase = (nextPhrase: string) => {
+    setTrainingPhrase(nextPhrase);
+    setTrainingWordIndex(0);
+    setCompletedTrainingWordIndexes([]);
+    setTrainingMessage("Comece pela palavra destacada");
   };
 
   const startTrainingRecording = async () => {
+    const target = currentTrainingTarget.trim();
+    if (!target) return;
+    const recordingMode = trainingMode;
+    const recordedWordIndex = trainingWordIndex;
     setError("");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -1892,7 +1944,7 @@ export function VoiceApp() {
         );
         const signature = await extractVoiceSignature(blob).catch(() => null);
         const saved = await storeTrainingSample({
-          phrase: trainingPhrase.trim(),
+          phrase: target,
           blob,
           mimeType: recorder.mimeType,
           createdAt: new Date().toISOString(),
@@ -1901,17 +1953,36 @@ export function VoiceApp() {
           ...(signature
             ? { speakerFingerprint: signature.speakerFingerprint }
             : {}),
-          source: "guided",
+          source: recordingMode === "words" ? "word" : "guided",
         });
         if (latestRecordingUrl) URL.revokeObjectURL(latestRecordingUrl);
         setLatestRecordingUrl(URL.createObjectURL(blob));
         setTrainingSamples((samples) => [saved, ...samples]);
         setTrainingCount((count) => count + 1);
-        setTrainingMessage(
-          user
-            ? "Amostra salva; sincronizando com sua conta…"
-            : "Amostra salva com segurança neste dispositivo",
-        );
+        if (recordingMode === "words") {
+          const completed = new Set([
+            ...completedTrainingWordIndexes,
+            recordedWordIndex,
+          ]);
+          const nextWordIndex = trainingWords.findIndex(
+            (_, index) => !completed.has(index),
+          );
+          setCompletedTrainingWordIndexes([...completed].sort((a, b) => a - b));
+          setTrainingWordIndex(
+            nextWordIndex >= 0 ? nextWordIndex : trainingWords.length,
+          );
+          setTrainingMessage(
+            nextWordIndex >= 0
+              ? `Palavra salva. Agora fale “${trainingWords[nextWordIndex]}”`
+              : "Todas as palavras desta frase foram treinadas",
+          );
+        } else {
+          setTrainingMessage(
+            user
+              ? "Frase salva; sincronizando com sua conta…"
+              : "Frase salva com segurança neste dispositivo",
+          );
+        }
         void syncTrainingSample(saved);
         stream.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
@@ -1919,7 +1990,11 @@ export function VoiceApp() {
       trainingStartedAtRef.current = new Date().getTime();
       recorder.start();
       setIsRecording(true);
-      setTrainingMessage("Gravando sua voz…");
+      setTrainingMessage(
+        recordingMode === "words"
+          ? `Gravando a palavra “${target}”…`
+          : "Gravando a frase completa…",
+      );
     } catch {
       setError("Não consegui acessar o microfone. Verifique a permissão do navegador.");
     }
@@ -2531,7 +2606,7 @@ export function VoiceApp() {
               <p className="eyebrow"><WandSparkles size={16} /> Treinamento clínico</p>
               <h1>Treine sua voz para<br /><em>conduzir consultas.</em></h1>
               <p>
-                Grave perguntas que você usa na anamnese. Cada exemplo associa sua voz ao texto correto e fortalece seu perfil de reconhecimento clínico.
+                Grave cada palavra separadamente. A Clara aprende seu padrão acústico e usa esse vocabulário para reconhecer combinações e frases novas.
               </p>
               <p className="phrase-catalog-count">
                 {CLINICAL_PHRASES.length} perguntas em {CLINICAL_SPECIALTIES.length} áreas clínicas para praticar no estágio.
@@ -2540,6 +2615,9 @@ export function VoiceApp() {
                 <strong>{trainingCount}</strong>
                 <span>amostras {user ? "sincronizadas" : "salvas"}<br />{user ? "na sua conta" : "neste dispositivo"}</span>
               </div>
+              <p className="trained-word-count">
+                <strong>{trainedWordVocabulary.length}</strong> palavras diferentes já treinadas para combinar em novas frases.
+              </p>
               <div className="profile-progress" aria-label={`${Math.min(trainingCount, 40)} de 40 amostras recomendadas`}>
                 <div><span>Base inicial</span><strong>{Math.min(trainingCount, 40)}/40</strong></div>
                 <span><i style={{ width: `${Math.min(100, (trainingCount / 40) * 100)}%` }} /></span>
@@ -2575,26 +2653,84 @@ export function VoiceApp() {
                 <button onClick={nextTrainingPhrase} disabled={isRecording}>Pular frase <ChevronRight size={16} /></button>
               </div>
               <div className="context-chip">Contexto: {specialtyPhrases[promptIndex].context}</div>
-              <label htmlFor="training-phrase">Leia esta pergunta — ou escreva uma que você usa na consulta</label>
+              <div className="training-mode-selector" role="group" aria-label="Modo de treinamento da voz">
+                <button
+                  type="button"
+                  className={trainingMode === "words" ? "active" : ""}
+                  onClick={() => changeTrainingMode("words")}
+                  disabled={isRecording}
+                >
+                  Palavra por palavra
+                </button>
+                <button
+                  type="button"
+                  className={trainingMode === "phrase" ? "active" : ""}
+                  onClick={() => changeTrainingMode("phrase")}
+                  disabled={isRecording}
+                >
+                  Frase completa
+                </button>
+              </div>
+              <label htmlFor="training-phrase">Use esta pergunta — ou escreva uma frase da sua consulta</label>
               <textarea
                 id="training-phrase"
                 value={trainingPhrase}
-                onChange={(event) => setTrainingPhrase(event.target.value)}
+                onChange={(event) => updateTrainingPhrase(event.target.value)}
                 disabled={isRecording}
               />
+
+              {trainingMode === "words" ? (
+                <section className="word-training-guide" aria-label="Guia palavra por palavra">
+                  <div className="word-guide-heading">
+                    <strong>
+                      {currentTrainingWord
+                        ? `Agora fale: “${currentTrainingWord}”`
+                        : "Frase concluída"}
+                    </strong>
+                    <span>
+                      {Math.min(trainingWordIndex + 1, trainingWords.length)} de {trainingWords.length} palavras
+                    </span>
+                  </div>
+                  <div className="guided-words" aria-live="polite">
+                    {trainingWords.map((word, index) => (
+                      <button
+                        type="button"
+                        key={`${word}-${index}`}
+                        className={`${index === trainingWordIndex ? "current" : ""} ${completedTrainingWordIndexes.includes(index) ? "completed" : ""}`.trim()}
+                        onClick={() => {
+                          setTrainingWordIndex(index);
+                          setTrainingMessage(`Prepare-se para falar “${word}”`);
+                        }}
+                        disabled={isRecording}
+                        aria-current={index === trainingWordIndex ? "step" : undefined}
+                        aria-label={`${completedTrainingWordIndexes.includes(index) ? "Treinada" : "Treinar"}: ${word}`}
+                      >
+                        {word}
+                      </button>
+                    ))}
+                  </div>
+                  <p>A palavra em verde escuro é a que você deve falar agora. As concluídas ficam marcadas em verde claro.</p>
+                </section>
+              ) : null}
 
               <div className="recording-area">
                 <button
                   className={`training-mic ${isRecording ? "active" : ""}`}
                   onClick={isRecording ? stopTrainingRecording : startTrainingRecording}
-                  disabled={!trainingPhrase.trim()}
-                  aria-label={isRecording ? "Parar e salvar gravação" : "Gravar frase"}
+                  disabled={!currentTrainingTarget}
+                  aria-label={isRecording ? "Parar e salvar gravação" : trainingMode === "words" ? `Gravar palavra: ${currentTrainingWord}` : "Gravar frase completa"}
                 >
                   {isRecording ? <CircleStop size={32} /> : <Mic size={32} />}
                 </button>
                 <div>
                   <strong>{trainingMessage}</strong>
-                  <span>{isRecording ? "Quando terminar, toque para salvar" : "Toque no microfone e fale naturalmente"}</span>
+                  <span>
+                    {isRecording
+                      ? "Fale somente o item destacado e toque para salvar"
+                      : trainingMode === "words"
+                        ? "Toque no microfone, fale uma palavra e salve"
+                        : "Toque no microfone e leia a frase naturalmente"}
+                  </span>
                 </div>
               </div>
 
@@ -2637,7 +2773,11 @@ export function VoiceApp() {
                       <div>
                         <strong>{sample.phrase}</strong>
                         <span>
-                          {sample.source === "correction" ? "Correção durante conversa" : "Treino guiado"}
+                          {sample.source === "correction"
+                            ? "Correção durante conversa"
+                            : sample.source === "word"
+                              ? "Palavra treinada"
+                              : "Frase completa treinada"}
                           {sample.heard ? ` • ouvido como “${sample.heard}”` : ""}
                           {sample.synced ? " • sincronizada" : user ? " • aguardando sincronização" : " • somente neste dispositivo"}
                         </span>

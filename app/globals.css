@@ -586,6 +586,8 @@ main.talk-main {
 .training-progress { display: flex; align-items: center; gap: 14px; margin: 28px 0; }
 .training-progress strong { font-family: Georgia, serif; font-size: 48px; color: var(--green-2); line-height: 1; }
 .training-progress span { color: var(--muted); font-size: 13px; line-height: 1.4; }
+.trained-word-count { max-width: 430px; margin: -16px 0 22px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.trained-word-count strong { color: var(--green-2); }
 .profile-progress { max-width: 430px; margin: 0 0 25px; }
 .profile-progress > div { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; color: var(--muted); font-size: 11px; font-weight: 700; }
 .profile-progress > div strong { color: var(--green-2); }
@@ -604,6 +606,21 @@ main.talk-main {
 .context-chip { display: inline-flex; width: fit-content; margin: -10px 0 18px; padding: 7px 11px; border-radius: 999px; background: #edf2ce; color: var(--green); font-size: 11px; font-weight: 800; letter-spacing: .02em; }
 .training-card label { display: block; color: var(--muted); font-size: 13px; margin-bottom: 10px; }
 .training-card > textarea { width: 100%; min-height: 122px; resize: vertical; border: 1px solid var(--line); border-radius: 15px; background: #fafaf5; color: var(--ink); padding: 18px; font-family: Georgia, serif; font-size: 27px; line-height: 1.35; }
+.training-mode-selector { margin: 0 0 17px; padding: 4px; border-radius: 12px; background: #edf0eb; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.training-mode-selector button { min-height: 38px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font-size: 11px; font-weight: 850; cursor: pointer; }
+.training-mode-selector button.active { background: white; color: var(--green); box-shadow: 0 2px 8px rgba(17, 54, 45, .09); }
+.training-mode-selector button:disabled { cursor: not-allowed; opacity: .65; }
+.word-training-guide { margin: 15px 0 0; padding: 15px 16px; border: 1px solid #b9d5ca; border-radius: 15px; background: #f4faf6; }
+.word-guide-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
+.word-guide-heading strong { color: var(--green); font-size: 15px; }
+.word-guide-heading span { flex: 0 0 auto; color: var(--muted); font-size: 10px; font-weight: 800; }
+.guided-words { display: flex; flex-wrap: wrap; gap: 7px; }
+.guided-words button { min-height: 34px; padding: 5px 10px; border: 1px solid #d4ddd7; border-radius: 9px; background: white; color: var(--ink); font-family: Georgia, serif; font-size: 16px; cursor: pointer; transition: transform .16s, background .16s, border-color .16s; }
+.guided-words button.completed { border-color: #a9caba; background: #dff0e7; color: var(--green-2); }
+.guided-words button.current { border-color: var(--green); background: var(--green); color: white; font-weight: 800; transform: translateY(-2px); box-shadow: 0 5px 12px rgba(21, 82, 70, .18); }
+.guided-words button:disabled { cursor: default; }
+.training-card.recording .guided-words button.current { animation: softPulse 1.3s infinite; }
+.word-training-guide > p { margin: 11px 0 0; color: var(--muted); font-size: 10px; line-height: 1.45; }
 .recording-area { margin: 22px 0; padding: 19px; border: 1px dashed #c9d3cd; border-radius: 16px; display: flex; align-items: center; gap: 16px; }
 .training-mic { width: 64px; height: 64px; flex: 0 0 auto; border: 0; border-radius: 50%; background: var(--green); color: white; display: grid; place-items: center; cursor: pointer; }
 .training-mic.active { background: #bd493f; animation: softPulse 1.3s infinite; }
@@ -666,6 +683,7 @@ footer { width: min(1184px, calc(100% - 48px)); margin: 0 auto; min-height: 74px
   .lower-grid { grid-template-columns: 1fr; }
   .quick-list { grid-template-columns: repeat(2, 1fr); }
   .training-view { gap: 42px; }
+  .training-card { order: -1; }
 }
 
 @media (max-width: 600px) {

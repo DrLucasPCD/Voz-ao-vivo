@@ -117,6 +117,11 @@ test("ships the clinical consultation voice workflow", async () => {
   assert.match(source, /isLocalDecodingFailure/);
   assert.match(source, /isNonSpeechTranscript/);
   assert.match(source, /Trecho descartado sem reprodução/);
+  assert.match(source, /Palavra por palavra/);
+  assert.match(source, /Guia palavra por palavra/);
+  assert.match(source, /Agora fale:/);
+  assert.match(source, /source: recordingMode === "words" \? "word" : "guided"/);
+  assert.match(source, /correctWithTrainedWords/);
   assert.match(source, /Identificação automática de quem está falando/);
   assert.match(source, /Equipe, colega ou preceptoria/);
   assert.match(source, /prioritizeQuickQuestions/);

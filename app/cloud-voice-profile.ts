@@ -24,7 +24,7 @@ export type CloudVoiceSample = {
   phrase: string;
   mimeType: string;
   createdAt: string;
-  source: "guided" | "correction";
+  source: "guided" | "word" | "correction";
   heard?: string;
   durationMs?: number;
   voiceSignature?: number[];
