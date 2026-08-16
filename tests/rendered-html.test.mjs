@@ -112,7 +112,8 @@ test("ships the clinical consultation voice workflow", async () => {
   assert.match(source, /perfil-de-voz-clara/);
   assert.match(source, /maxAlternatives = 5/);
   assert.match(source, /recognition\.continuous = true/);
-  assert.match(source, /recorder\.start\(8_000\)/);
+  assert.match(source, /createSegmentedAudioRecorder/);
+  assert.match(source, /intervalMs: 8_000/);
   assert.match(source, /listeningRequestedRef/);
   assert.match(source, /navigator\.audioSession\.type = type/);
   assert.match(source, /A gravação só termina quando você tocar neste botão novamente/);

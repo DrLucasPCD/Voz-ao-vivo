@@ -122,6 +122,10 @@ import {
   recordPdfWasConfirmed,
   RECORD_PDF_CONFIRMATION_KEY,
 } from "./record-download-state";
+import {
+  createSegmentedAudioRecorder,
+  type SegmentedAudioRecorder,
+} from "./segmented-audio-recorder";
 
 type RecognitionAlternative = { transcript: string; confidence: number };
 
@@ -536,9 +540,8 @@ export function VoiceApp() {
   const activePiperAudioUrlRef = useRef("");
   const activeNativeUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const speechRequestRef = useRef(0);
-  const conversationRecorderRef = useRef<MediaRecorder | null>(null);
+  const conversationRecorderRef = useRef<SegmentedAudioRecorder | null>(null);
   const conversationStreamRef = useRef<MediaStream | null>(null);
-  const conversationStartedAtRef = useRef(0);
   const conversationProcessingRef = useRef<Promise<void>>(Promise.resolve());
   const pendingCorrectionDurationMsRef = useRef(0);
   const [pendingCorrectionAudio, setPendingCorrectionAudio] = useState<Blob | null>(null);
@@ -990,6 +993,8 @@ export function VoiceApp() {
       listeningRequestedRef.current = false;
       recognitionRef.current?.abort();
       streamRef.current?.getTracks().forEach((track) => track.stop());
+      void conversationRecorderRef.current?.stop();
+      conversationRecorderRef.current = null;
       conversationStreamRef.current?.getTracks().forEach((track) => track.stop());
       window.speechSynthesis?.cancel();
       activePiperAudioRef.current?.pause();
@@ -1524,8 +1529,6 @@ export function VoiceApp() {
         return;
       }
       conversationStreamRef.current = stream;
-      const recorder = new MediaRecorder(stream, { audioBitsPerSecond: 24000 });
-      conversationRecorderRef.current = recorder;
 
       const processRecordedAudio = async (
         recordedAudio: Blob,
@@ -1740,20 +1743,20 @@ export function VoiceApp() {
         if (autoSpeakRef.current) void speak(finalText);
       };
 
-      recorder.ondataavailable = (event) => {
-        if (!event.data.size) return;
+      const enqueueRecordedSegment = (
+        recordedAudio: Blob,
+        durationMs: number,
+      ) => {
+        if (!recordedAudio.size) return;
         const topTranscript = latestFinalRef.current.trim();
         const contextualTranscript = latestContextualFinalRef.current.trim();
         latestFinalRef.current = "";
         latestContextualFinalRef.current = "";
-        const now = Date.now();
-        const durationMs = Math.max(0, now - conversationStartedAtRef.current);
-        conversationStartedAtRef.current = now;
         if (!topTranscript && !contextualTranscript && !localTranscriptionReady) return;
         conversationProcessingRef.current = conversationProcessingRef.current
           .then(() =>
             processRecordedAudio(
-              event.data,
+              recordedAudio,
               durationMs,
               topTranscript,
               contextualTranscript,
@@ -1761,27 +1764,34 @@ export function VoiceApp() {
           )
           .catch(() => undefined);
       };
-      recorder.onstop = () => {
-        const stoppedUnexpectedly = listeningRequestedRef.current;
-        if (stoppedUnexpectedly) {
+
+      let closeConversationStream: () => Promise<void> = async () => {};
+      const recorder = createSegmentedAudioRecorder(stream, {
+        intervalMs: 8_000,
+        audioBitsPerSecond: 24_000,
+        onSegment: enqueueRecordedSegment,
+        onError: () => {
+          if (!listeningRequestedRef.current) return;
           listeningRequestedRef.current = false;
           setAudioSessionType("playback");
           setIsListening(false);
-          setError("O microfone foi interrompido pelo navegador. Toque para iniciar novamente.");
+          setError("A captura do microfone oscilou. Toque para iniciar novamente.");
+          void closeConversationStream();
+        },
+      });
+      conversationRecorderRef.current = recorder;
+      closeConversationStream = async () => {
+        await recorder.stop();
+        await conversationProcessingRef.current;
+        stream.getTracks().forEach((track) => track.stop());
+        if (conversationStreamRef.current === stream) {
+          conversationStreamRef.current = null;
         }
-        void conversationProcessingRef.current.finally(() => {
-          stream.getTracks().forEach((track) => track.stop());
-          if (conversationStreamRef.current === stream) {
-            conversationStreamRef.current = null;
-          }
-          if (conversationRecorderRef.current === recorder) {
-            conversationRecorderRef.current = null;
-          }
-          setIsPreparingCorrectionAudio(false);
-        });
+        if (conversationRecorderRef.current === recorder) {
+          conversationRecorderRef.current = null;
+        }
+        setIsPreparingCorrectionAudio(false);
       };
-      conversationStartedAtRef.current = Date.now();
-      recorder.start(8_000);
 
       if (!Recognition) {
         recognitionRef.current = null;
@@ -1843,7 +1853,7 @@ export function VoiceApp() {
           latestContextualFinalRef.current,
           contextualFinalText.trim(),
         );
-        if (recorder.state === "recording") recorder.requestData();
+        recorder.flush();
       };
 
       recognition.onerror = (event) => {
@@ -1860,7 +1870,7 @@ export function VoiceApp() {
           setAudioSessionType("playback");
           setIsListening(false);
           setError(messages[event.error]);
-          if (recorder.state === "recording") recorder.stop();
+          void closeConversationStream();
           return;
         }
         if (event.error !== "aborted") {
@@ -1898,10 +1908,20 @@ export function VoiceApp() {
     listeningRequestedRef.current = false;
     recognitionRef.current?.stop();
     recognitionRef.current = null;
-    if (conversationRecorderRef.current?.state === "recording") {
+    const recorder = conversationRecorderRef.current;
+    if (recorder) {
       setIsPreparingCorrectionAudio(true);
-      conversationRecorderRef.current.requestData();
-      conversationRecorderRef.current.stop();
+      void recorder
+        .stop()
+        .then(() => conversationProcessingRef.current)
+        .finally(() => {
+          conversationStreamRef.current?.getTracks().forEach((track) => track.stop());
+          conversationStreamRef.current = null;
+          if (conversationRecorderRef.current === recorder) {
+            conversationRecorderRef.current = null;
+          }
+          setIsPreparingCorrectionAudio(false);
+        });
     } else {
       conversationStreamRef.current?.getTracks().forEach((track) => track.stop());
       conversationStreamRef.current = null;
