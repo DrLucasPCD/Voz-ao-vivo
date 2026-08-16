@@ -538,6 +538,8 @@ export function VoiceApp() {
   const lastSynthesizedTextRef = useRef("");
   const synthesisEndedAtRef = useRef(0);
   const outputAudioContextRef = useRef<AudioContext | null>(null);
+  const outputKeepAliveOscillatorRef = useRef<OscillatorNode | null>(null);
+  const outputKeepAliveGainRef = useRef<GainNode | null>(null);
   const activePiperAudioRef = useRef<HTMLAudioElement | null>(null);
   const activePiperAudioUrlRef = useRef("");
   const activePiperSourceRef = useRef<AudioBufferSourceNode | null>(null);
@@ -549,6 +551,7 @@ export function VoiceApp() {
   const pendingCorrectionDurationMsRef = useRef(0);
   const [pendingCorrectionAudio, setPendingCorrectionAudio] = useState<Blob | null>(null);
   const [isPreparingCorrectionAudio, setIsPreparingCorrectionAudio] = useState(false);
+  const latestRecordingUrlRef = useRef("");
 
   const addConsultationTurn = useCallback(
     (
@@ -1011,13 +1014,24 @@ export function VoiceApp() {
       }
       activePiperSourceRef.current?.disconnect();
       activePiperSourceRef.current = null;
+      try {
+        outputKeepAliveOscillatorRef.current?.stop();
+      } catch {
+        // O oscilador pode já ter sido encerrado pelo navegador.
+      }
+      outputKeepAliveOscillatorRef.current?.disconnect();
+      outputKeepAliveOscillatorRef.current = null;
+      outputKeepAliveGainRef.current?.disconnect();
+      outputKeepAliveGainRef.current = null;
       if (activePiperAudioUrlRef.current) {
         URL.revokeObjectURL(activePiperAudioUrlRef.current);
       }
       void outputAudioContextRef.current?.close();
-      if (latestRecordingUrl) URL.revokeObjectURL(latestRecordingUrl);
+      if (latestRecordingUrlRef.current) {
+        URL.revokeObjectURL(latestRecordingUrlRef.current);
+      }
     };
-  }, [latestRecordingUrl]);
+  }, []);
 
   const specialtyPhrases = phrasesForSpecialty(selectedSpecialty);
   const trainingWords = tokenizeTrainingPhrase(trainingPhrase);
@@ -1188,6 +1202,8 @@ export function VoiceApp() {
       window.AudioContext ?? window.webkitAudioContext;
     if (!AudioContextConstructor) return null;
     if (!outputAudioContextRef.current || outputAudioContextRef.current.state === "closed") {
+      outputKeepAliveOscillatorRef.current = null;
+      outputKeepAliveGainRef.current = null;
       outputAudioContextRef.current = new AudioContextConstructor();
     }
     return outputAudioContextRef.current;
@@ -1208,15 +1224,21 @@ export function VoiceApp() {
     const context = ensureOutputAudioContext();
     window.speechSynthesis?.resume();
     if (!context) return null;
-    if (context.state === "suspended") void context.resume();
+    if (context.state !== "running") void context.resume();
     try {
-      const silentBuffer = context.createBuffer(1, 1, context.sampleRate || 22_050);
-      const silentSource = context.createBufferSource();
-      silentSource.buffer = silentBuffer;
-      silentSource.connect(context.destination);
-      silentSource.start(0);
+      if (!outputKeepAliveOscillatorRef.current) {
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        oscillator.frequency.value = 20;
+        gain.gain.value = 0.00000001;
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start();
+        outputKeepAliveOscillatorRef.current = oscillator;
+        outputKeepAliveGainRef.current = gain;
+      }
     } catch {
-      // O contexto ainda pode ser ativado normalmente sem a amostra silenciosa.
+      // O contexto ainda pode ser ativado normalmente sem o canal de manutenção.
     }
     return context;
   }, [ensureOutputAudioContext]);
@@ -1348,11 +1370,11 @@ export function VoiceApp() {
         if (peak < 0.0005) {
           throw new Error("A voz Faber gerou um áudio sem volume");
         }
-        if (outputContext.state === "suspended") {
+        if (outputContext.state !== "running") {
           await outputContext.resume().catch(() => undefined);
         }
       }
-      if (outputContext && decodedAudio && outputContext.state === "running") {
+      if (outputContext && decodedAudio) {
         const source = outputContext.createBufferSource();
         source.buffer = decodedAudio;
         source.connect(outputContext.destination);
@@ -1368,6 +1390,9 @@ export function VoiceApp() {
         setPiperStatus("ready");
         setMessage("Falando com a voz Faber");
         source.start(0);
+        if (outputContext.state !== "running") {
+          void outputContext.resume();
+        }
         return;
       }
       const audioUrl = URL.createObjectURL(audioBlob);
@@ -1398,7 +1423,7 @@ export function VoiceApp() {
         releaseAudio();
         setPiperStatus("ready");
         playNativeFallback(
-          "Falando com a voz do aparelho porque o Safari bloqueou esta reprodução",
+          "Falando com a voz do aparelho enquanto a saída neural é reativada",
           false,
         );
       };
@@ -1414,9 +1439,7 @@ export function VoiceApp() {
       }
       if (isPlaybackPermissionError(piperFailure)) {
         setPiperStatus("ready");
-        setPiperError(
-          "A voz Faber continua armazenada. O Safari bloqueou esta reprodução; toque em Testar áudio agora para liberar o som.",
-        );
+        setPiperError("");
         playNativeFallback("Falando com a voz do aparelho", false);
       } else {
         setPiperStatus(piperInstalled ? "ready" : "fallback");
@@ -2304,8 +2327,12 @@ export function VoiceApp() {
             : {}),
           source: recordingMode === "words" ? "word" : "guided",
         });
-        if (latestRecordingUrl) URL.revokeObjectURL(latestRecordingUrl);
-        setLatestRecordingUrl(URL.createObjectURL(blob));
+        if (latestRecordingUrlRef.current) {
+          URL.revokeObjectURL(latestRecordingUrlRef.current);
+        }
+        const recordingUrl = URL.createObjectURL(blob);
+        latestRecordingUrlRef.current = recordingUrl;
+        setLatestRecordingUrl(recordingUrl);
         setTrainingSamples((samples) => [saved, ...samples]);
         setTrainingCount((count) => count + 1);
         if (recordingMode === "words") {

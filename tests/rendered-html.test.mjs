@@ -61,10 +61,16 @@ test("ships the local Piper Faber Brazilian voice", async () => {
   assert.match(source, /synthesizeWithPiper/);
   assert.match(source, /new Audio\(audioUrl\)/);
   assert.match(source, /outputContext\.createBufferSource/);
+  assert.match(source, /context\.createOscillator/);
+  assert.match(source, /outputKeepAliveOscillatorRef/);
   assert.match(source, /piperInstalled/);
   assert.match(source, /Voz armazenada/);
   assert.match(source, /isPlaybackPermissionError/);
   assert.match(source, /Testar áudio agora/);
+  assert.doesNotMatch(
+    source,
+    /O Safari bloqueou esta reprodução; toque em Testar áudio agora/,
+  );
   assert.match(piperClient, /pt_BR-faber-medium\.onnx/);
   assert.match(piperClient, /piper-voice\.worker\.js/);
   assert.match(piperWorker, /Trelis\/piper-pt-br-faber-medium/);
