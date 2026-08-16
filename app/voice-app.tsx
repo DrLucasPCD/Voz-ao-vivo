@@ -395,6 +395,9 @@ function authFailureDetails(authFailure: unknown) {
 
 export function VoiceApp() {
   const [mode, setMode] = useState<"talk" | "train">("talk");
+  const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<
+    "listen" | "phrases" | "history" | "settings"
+  >("listen");
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState("");
@@ -1290,6 +1293,7 @@ export function VoiceApp() {
 
   const startListening = async () => {
     if (listeningRequestedRef.current) return;
+    setMobileWorkspaceTab("listen");
     listeningRequestedRef.current = true;
     setAudioSessionType("play-and-record");
     unlockAudioOutput();
@@ -2115,7 +2119,7 @@ export function VoiceApp() {
     rawTranscript.trim() && transcript.trim() && normalize(rawTranscript) !== normalize(transcript);
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${mode === "talk" ? "talk-shell" : "training-shell"}`}>
       <header className="topbar">
         <a className="brand" href="#inicio" aria-label="Clara, página inicial">
           <span className="brand-mark" aria-hidden="true"><Volume2 size={22} /></span>
@@ -2188,7 +2192,14 @@ export function VoiceApp() {
         </div>
       </header>
 
-      <main id="inicio" className={mode === "talk" ? "talk-main" : "training-main"}>
+      <main
+        id="inicio"
+        className={
+          mode === "talk"
+            ? `talk-main mobile-tab-${mobileWorkspaceTab}`
+            : "training-main"
+        }
+      >
         {mode === "talk" ? (
           <>
             <section className="hero">
@@ -2217,6 +2228,46 @@ export function VoiceApp() {
                 ))}
               </select>
             </section>
+
+            <nav className="mobile-workspace-tabs" aria-label="Funções principais da consulta">
+              <button
+                type="button"
+                className={mobileWorkspaceTab === "listen" ? "active" : ""}
+                onClick={() => setMobileWorkspaceTab("listen")}
+                aria-current={mobileWorkspaceTab === "listen" ? "page" : undefined}
+              >
+                <Mic size={18} />
+                <span>Ouvir</span>
+              </button>
+              <button
+                type="button"
+                className={mobileWorkspaceTab === "phrases" ? "active" : ""}
+                onClick={() => setMobileWorkspaceTab("phrases")}
+                aria-current={mobileWorkspaceTab === "phrases" ? "page" : undefined}
+              >
+                <Sparkles size={18} />
+                <span>Falas</span>
+              </button>
+              <button
+                type="button"
+                className={mobileWorkspaceTab === "history" ? "active" : ""}
+                onClick={() => setMobileWorkspaceTab("history")}
+                aria-current={mobileWorkspaceTab === "history" ? "page" : undefined}
+              >
+                <FileText size={18} />
+                <span>Histórico</span>
+                {consultationTurns.length ? <small>{consultationTurns.length}</small> : null}
+              </button>
+              <button
+                type="button"
+                className={mobileWorkspaceTab === "settings" ? "active" : ""}
+                onClick={() => setMobileWorkspaceTab("settings")}
+                aria-current={mobileWorkspaceTab === "settings" ? "page" : undefined}
+              >
+                <HardDriveDownload size={18} />
+                <span>Ajustes</span>
+              </button>
+            </nav>
 
             <section className="talk-grid" aria-label="Área principal de conversa">
               <article className={`listen-card ${isListening ? "listening" : ""}`}>

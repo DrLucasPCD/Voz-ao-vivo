@@ -535,6 +535,8 @@ main.talk-main {
   column-gap: 14px;
 }
 
+.mobile-workspace-tabs { display: none; }
+
 .talk-main .hero { grid-area: hero; padding: 18px 4px 12px; grid-template-columns: 1fr auto; gap: 24px; }
 .talk-main .eyebrow { margin-bottom: 7px; font-size: 9px; }
 .talk-main h1 { font-size: clamp(34px, 4vw, 50px); line-height: .98; }
@@ -738,6 +740,321 @@ footer { width: min(1184px, calc(100% - 48px)); margin: 0 auto; min-height: 74px
   .sample-row time { display: none; }
   .sample-row strong, .sample-row span { white-space: normal; }
   footer { flex-direction: column; justify-content: center; gap: 7px; text-align: center; }
+
+  /* No iPhone, a consulta vira um painel de trabalho por abas. Assim o
+     microfone, as falas e o encerramento não ficam separados por uma página
+     longa de cartões de preparação. */
+  .talk-shell {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .talk-shell .topbar {
+    width: 100%;
+    min-height: 58px;
+    height: 58px;
+    padding: 7px 12px;
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+
+  .talk-shell .brand { justify-self: start; }
+  .talk-shell .brand > span:last-child { display: none; }
+  .talk-shell .brand-mark { width: 34px; height: 34px; }
+  .talk-shell .mode-switch { width: 100%; padding: 3px; }
+  .talk-shell .mode-switch button {
+    min-width: 0;
+    padding: 7px 6px;
+    gap: 4px;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+  .talk-shell .mode-switch button svg { width: 15px; height: 15px; }
+  .talk-shell .account-area {
+    width: auto;
+    grid-column: auto;
+    justify-self: end;
+    flex-wrap: nowrap;
+    gap: 4px;
+  }
+  .talk-shell .account-profile { padding: 2px; }
+  .talk-shell .account-avatar { width: 28px; height: 28px; flex-basis: 28px; }
+  .talk-shell .account-identity,
+  .talk-shell .sync-badge { display: none; }
+  .talk-shell .account-button.subtle,
+  .talk-shell .signin-buttons .account-button {
+    width: 32px;
+    min-height: 32px;
+    padding: 0;
+    gap: 0;
+    overflow: hidden;
+    font-size: 0;
+  }
+  .talk-shell .signin-buttons { width: auto; display: flex; gap: 4px; }
+  .talk-shell .auth-error {
+    position: fixed;
+    z-index: 40;
+    top: 62px;
+    left: 10px;
+    right: 10px;
+    max-width: none;
+  }
+
+  main.talk-main {
+    width: 100%;
+    height: calc(100dvh - 58px);
+    min-height: 0;
+    margin: 0;
+    padding: 8px 10px max(8px, env(safe-area-inset-bottom));
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow: hidden;
+  }
+
+  .talk-main .hero { display: none; }
+  .talk-main .clinical-context {
+    flex: 0 0 auto;
+    min-height: 48px;
+    margin: 0;
+    padding: 6px 8px 6px 11px;
+    align-items: center;
+    flex-direction: row;
+    gap: 8px;
+  }
+  .talk-main .clinical-context > div { display: block; min-width: 0; }
+  .talk-main .clinical-context label { font-size: 11px; }
+  .talk-main .clinical-context span { display: none; }
+  .talk-main .clinical-context select {
+    width: min(58%, 220px);
+    min-height: 36px;
+    flex: 0 0 auto;
+    padding-left: 10px;
+    font-size: 12px;
+  }
+
+  .talk-main .mobile-workspace-tabs {
+    position: relative;
+    z-index: 12;
+    flex: 0 0 auto;
+    min-height: 50px;
+    padding: 4px;
+    border: 1px solid var(--line);
+    border-radius: 15px;
+    background: rgba(238, 238, 231, .96);
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 3px;
+  }
+  .talk-main .mobile-workspace-tabs button {
+    position: relative;
+    min-width: 0;
+    min-height: 40px;
+    padding: 3px 2px;
+    border: 0;
+    border-radius: 11px;
+    background: transparent;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    font-size: 9px;
+    font-weight: 850;
+    cursor: pointer;
+  }
+  .talk-main .mobile-workspace-tabs button.active {
+    background: white;
+    color: var(--green);
+    box-shadow: 0 2px 8px rgba(22, 75, 65, .1);
+  }
+  .talk-main .mobile-workspace-tabs button small {
+    min-width: 15px;
+    height: 15px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: var(--green);
+    color: white;
+    display: grid;
+    place-items: center;
+    font-size: 8px;
+  }
+
+  .talk-main .talk-grid,
+  .talk-main .speaker-detection-card,
+  .talk-main .free-recognition-card,
+  .talk-main .offline-card,
+  .talk-main .piper-voice-card,
+  .talk-main .lower-grid { display: none; }
+
+  .talk-main.mobile-tab-listen .talk-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(185px, .78fr) minmax(260px, 1.22fr);
+    gap: 8px;
+  }
+  .talk-main.mobile-tab-listen .listen-card,
+  .talk-main.mobile-tab-listen .message-card {
+    min-height: 0;
+    height: 100%;
+    border-radius: 16px;
+  }
+  .talk-main.mobile-tab-listen .listen-card { padding: 9px 12px 11px; }
+  .talk-main.mobile-tab-listen .status-line { min-height: 20px; font-size: 9px; }
+  .talk-main.mobile-tab-listen .learned-count { padding: 3px 5px; font-size: 7px; }
+  .talk-main.mobile-tab-listen .mic-button {
+    width: 84px;
+    height: 84px;
+    margin: 12px 0 9px;
+  }
+  .talk-main.mobile-tab-listen .mic-button svg { width: 38px; height: 38px; }
+  .talk-main.mobile-tab-listen .mic-ripple { inset: -8px; }
+  .talk-main.mobile-tab-listen .ripple-two { inset: -16px; }
+  .talk-main.mobile-tab-listen .mic-instruction { gap: 3px; }
+  .talk-main.mobile-tab-listen .mic-instruction strong { font-size: 12px; }
+  .talk-main.mobile-tab-listen .mic-instruction span { font-size: 9px; }
+  .talk-main.mobile-tab-listen .message-card { padding: 12px 13px; }
+  .talk-main.mobile-tab-listen .section-label { font-size: 12px; }
+  .talk-main.mobile-tab-listen .section-hint { font-size: 9px; }
+  .talk-main.mobile-tab-listen .transcript-wrap {
+    min-height: 0;
+    margin-top: 4px;
+  }
+  .talk-main.mobile-tab-listen .transcript-wrap textarea {
+    min-height: 0;
+    padding: 7px 1px;
+    font-size: clamp(20px, 6vw, 27px);
+  }
+  .talk-main.mobile-tab-listen .message-actions {
+    padding-top: 8px;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+  .talk-main.mobile-tab-listen .message-actions .primary-button,
+  .talk-main.mobile-tab-listen .message-actions .secondary-button {
+    width: auto;
+    min-width: 0;
+    min-height: 42px;
+    flex: 1;
+    padding: 0 8px;
+    font-size: 10px;
+  }
+
+  .talk-main.mobile-tab-phrases .lower-grid,
+  .talk-main.mobile-tab-history .lower-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+    margin: 0;
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .talk-main.mobile-tab-phrases .quick-card,
+  .talk-main.mobile-tab-history .quick-card {
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+    padding: 12px;
+    border-radius: 16px;
+  }
+  .talk-main.mobile-tab-phrases .auto-card,
+  .talk-main.mobile-tab-history .auto-card { display: none; }
+  .talk-main.mobile-tab-phrases .small-card-heading { margin-bottom: 7px; }
+  .talk-main.mobile-tab-phrases .small-card-heading > span { font-size: 12px; }
+  .talk-main.mobile-tab-phrases .small-card-heading small { font-size: 9px; }
+  .talk-main.mobile-tab-phrases .patient-context-box {
+    margin-bottom: 6px;
+    padding: 7px 9px;
+    grid-template-columns: 1fr;
+  }
+  .talk-main.mobile-tab-phrases .patient-context-box span { max-height: 27px; font-size: 8px; }
+  .talk-main.mobile-tab-phrases .quick-kind-filters { margin-bottom: 6px; flex-wrap: nowrap; }
+  .talk-main.mobile-tab-phrases .quick-kind-filters button {
+    min-width: 0;
+    min-height: 28px;
+    flex: 1;
+    padding: 0 4px;
+    font-size: 8px;
+  }
+  .talk-main.mobile-tab-phrases .quick-list {
+    min-height: 0;
+    max-height: none;
+    flex: 1 1 auto;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    overscroll-behavior: contain;
+  }
+  .talk-main.mobile-tab-phrases .quick-list button {
+    min-height: 58px;
+    padding: 7px 8px;
+    font-size: 9px;
+  }
+  .talk-main.mobile-tab-phrases .show-questions-button { flex: 0 0 auto; }
+  .talk-main.mobile-tab-phrases .consultation-history { display: none; }
+
+  .talk-main.mobile-tab-history .quick-card > :not(.consultation-history) { display: none; }
+  .talk-main.mobile-tab-history .consultation-history {
+    min-height: 0;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .talk-main.mobile-tab-history .consultation-history-heading { margin-bottom: 10px; }
+  .talk-main.mobile-tab-history .consultation-history-heading span { display: block; }
+  .talk-main.mobile-tab-history .consultation-turns {
+    min-height: 0;
+    max-height: none;
+    flex: 1 1 auto;
+    gap: 6px;
+    overscroll-behavior: contain;
+  }
+  .talk-main.mobile-tab-history .consultation-turn {
+    grid-template-columns: 52px minmax(0, 1fr) auto;
+    padding: 8px 9px;
+    font-size: 10px;
+  }
+  .talk-main.mobile-tab-history .consultation-turn time { grid-column: auto; }
+  .talk-main.mobile-tab-history .empty-consultation-history { flex: 1 1 auto; }
+  .talk-main.mobile-tab-history .finish-consultation-button {
+    flex: 0 0 auto;
+    min-height: 46px;
+    margin-top: 9px;
+  }
+
+  main.talk-main.mobile-tab-settings { overflow-y: auto; }
+  .talk-main.mobile-tab-settings .mobile-workspace-tabs {
+    position: sticky;
+    top: 0;
+  }
+  .talk-main.mobile-tab-settings .speaker-detection-card,
+  .talk-main.mobile-tab-settings .free-recognition-card,
+  .talk-main.mobile-tab-settings .offline-card,
+  .talk-main.mobile-tab-settings .piper-voice-card { display: flex; flex: 0 0 auto; margin: 0; }
+  .talk-main.mobile-tab-settings .free-recognition-card,
+  .talk-main.mobile-tab-settings .offline-card,
+  .talk-main.mobile-tab-settings .piper-voice-card {
+    padding: 13px;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 9px;
+  }
+  .talk-main.mobile-tab-settings .lower-grid {
+    height: auto;
+    margin: 0;
+    display: block;
+  }
+  .talk-main.mobile-tab-settings .quick-card { display: none; }
+  .talk-main.mobile-tab-settings .auto-card { display: grid; }
+  .talk-shell footer { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
