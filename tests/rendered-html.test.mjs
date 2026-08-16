@@ -60,6 +60,10 @@ test("ships the local Piper Faber Brazilian voice", async () => {
   assert.match(source, /Voz neural \{PIPER_VOICE_NAME\}/);
   assert.match(source, /synthesizeWithPiper/);
   assert.match(source, /new Audio\(audioUrl\)/);
+  assert.match(source, /outputContext\.createBufferSource/);
+  assert.match(source, /piperInstalled/);
+  assert.match(source, /Voz armazenada/);
+  assert.match(source, /isPlaybackPermissionError/);
   assert.match(source, /Testar áudio agora/);
   assert.match(piperClient, /pt_BR-faber-medium\.onnx/);
   assert.match(piperClient, /piper-voice\.worker\.js/);

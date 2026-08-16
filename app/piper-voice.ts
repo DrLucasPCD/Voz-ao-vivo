@@ -2,6 +2,28 @@ export const PIPER_VOICE_NAME = "Faber — português do Brasil";
 export const PIPER_MODEL_SIZE_MB = 63;
 export const PIPER_FIRST_USE_DOWNLOAD_MB = 95;
 
+export function isPlaybackPermissionError(error: unknown) {
+  const name =
+    error && typeof error === "object" && "name" in error
+      ? String(error.name)
+      : "";
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : error && typeof error === "object" && "message" in error
+          ? String(error.message)
+          : "";
+  const normalized = `${name} ${message}`.toLowerCase();
+  return (
+    normalized.includes("notallowederror") ||
+    normalized.includes("request is not allowed") ||
+    normalized.includes("user denied permission") ||
+    normalized.includes("autoplay")
+  );
+}
+
 export async function isPiperVoiceCached() {
   if (!navigator.storage?.getDirectory) return false;
   try {

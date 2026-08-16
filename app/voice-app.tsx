@@ -82,6 +82,7 @@ import {
   googleAuthProvider,
 } from "./firebase";
 import {
+  isPlaybackPermissionError,
   isPiperVoiceCached,
   PIPER_FIRST_USE_DOWNLOAD_MB,
   PIPER_MODEL_SIZE_MB,
@@ -495,6 +496,7 @@ export function VoiceApp() {
   >("idle");
   const [piperDownloadPercent, setPiperDownloadPercent] = useState(0);
   const [piperError, setPiperError] = useState("");
+  const [piperInstalled, setPiperInstalled] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
   const [localTranscriptionReady, setLocalTranscriptionReady] = useState(false);
   const [offlineStatus, setOfflineStatus] = useState<
@@ -538,6 +540,7 @@ export function VoiceApp() {
   const outputAudioContextRef = useRef<AudioContext | null>(null);
   const activePiperAudioRef = useRef<HTMLAudioElement | null>(null);
   const activePiperAudioUrlRef = useRef("");
+  const activePiperSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const activeNativeUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const speechRequestRef = useRef(0);
   const conversationRecorderRef = useRef<SegmentedAudioRecorder | null>(null);
@@ -790,7 +793,10 @@ export function VoiceApp() {
       setLocalTranscriptionReady(transcriptionPrepared);
     }, 0);
     void isPiperVoiceCached().then((piperPrepared) => {
-      if (piperPrepared) setPiperStatus("ready");
+      if (piperPrepared) {
+        setPiperInstalled(true);
+        setPiperStatus("ready");
+      }
       if (transcriptionPrepared && shellPrepared && piperPrepared) {
         setOfflineStatus("ready");
         setOfflineProgress(100);
@@ -998,6 +1004,13 @@ export function VoiceApp() {
       conversationStreamRef.current?.getTracks().forEach((track) => track.stop());
       window.speechSynthesis?.cancel();
       activePiperAudioRef.current?.pause();
+      try {
+        activePiperSourceRef.current?.stop();
+      } catch {
+        // A fonte pode já ter terminado naturalmente.
+      }
+      activePiperSourceRef.current?.disconnect();
+      activePiperSourceRef.current = null;
       if (activePiperAudioUrlRef.current) {
         URL.revokeObjectURL(activePiperAudioUrlRef.current);
       }
@@ -1163,6 +1176,7 @@ export function VoiceApp() {
       setPiperStatus("generating");
       setMessage("Preparando áudio com a voz Faber…");
     } else {
+      setPiperInstalled(true);
       setPiperStatus("ready");
       setPiperDownloadPercent(100);
       setMessage("Voz Faber carregada neste dispositivo");
@@ -1214,6 +1228,13 @@ export function VoiceApp() {
     window.speechSynthesis?.cancel();
     activePiperAudioRef.current?.pause();
     activePiperAudioRef.current = null;
+    try {
+      activePiperSourceRef.current?.stop();
+    } catch {
+      // A fonte pode já ter terminado naturalmente.
+    }
+    activePiperSourceRef.current?.disconnect();
+    activePiperSourceRef.current = null;
     if (activePiperAudioUrlRef.current) {
       URL.revokeObjectURL(activePiperAudioUrlRef.current);
       activePiperAudioUrlRef.current = "";
@@ -1293,11 +1314,12 @@ export function VoiceApp() {
           }
         })
           .then(() => {
+            setPiperInstalled(true);
             setPiperStatus("ready");
             setPiperDownloadPercent(100);
           })
           .catch((preparationError) => {
-            setPiperStatus("fallback");
+            setPiperStatus(piperInstalled ? "ready" : "fallback");
             setPiperError(
               preparationError instanceof Error
                 ? preparationError.message
@@ -1310,9 +1332,11 @@ export function VoiceApp() {
 
     try {
       const audioBlob = await synthesizeWithPiper(phrase, updatePiperProgress);
+      setPiperInstalled(true);
       if (requestId !== speechRequestRef.current) return;
+      let decodedAudio: AudioBuffer | null = null;
       if (outputContext) {
-        const decodedAudio = await outputContext.decodeAudioData(
+        decodedAudio = await outputContext.decodeAudioData(
           await audioBlob.arrayBuffer(),
         );
         if (requestId !== speechRequestRef.current) return;
@@ -1324,6 +1348,27 @@ export function VoiceApp() {
         if (peak < 0.0005) {
           throw new Error("A voz Faber gerou um áudio sem volume");
         }
+        if (outputContext.state === "suspended") {
+          await outputContext.resume().catch(() => undefined);
+        }
+      }
+      if (outputContext && decodedAudio && outputContext.state === "running") {
+        const source = outputContext.createBufferSource();
+        source.buffer = decodedAudio;
+        source.connect(outputContext.destination);
+        activePiperSourceRef.current = source;
+        source.onended = () => {
+          if (activePiperSourceRef.current === source) {
+            source.disconnect();
+            activePiperSourceRef.current = null;
+          }
+          setPiperStatus("ready");
+          finish();
+        };
+        setPiperStatus("ready");
+        setMessage("Falando com a voz Faber");
+        source.start(0);
+        return;
       }
       const audioUrl = URL.createObjectURL(audioBlob);
       const audio = new Audio(audioUrl);
@@ -1351,7 +1396,11 @@ export function VoiceApp() {
       };
       audio.onerror = () => {
         releaseAudio();
-        playNativeFallback("Falando com a voz do aparelho porque o Piper não tocou");
+        setPiperStatus("ready");
+        playNativeFallback(
+          "Falando com a voz do aparelho porque o Safari bloqueou esta reprodução",
+          false,
+        );
       };
       setMessage("Falando com a voz Faber");
       await audio.play();
@@ -1363,25 +1412,35 @@ export function VoiceApp() {
         URL.revokeObjectURL(activePiperAudioUrlRef.current);
         activePiperAudioUrlRef.current = "";
       }
-      setPiperError(
-        piperFailure instanceof Error
-          ? piperFailure.message
-          : "A voz Faber não pôde ser carregada",
-      );
-      playNativeFallback();
+      if (isPlaybackPermissionError(piperFailure)) {
+        setPiperStatus("ready");
+        setPiperError(
+          "A voz Faber continua armazenada. O Safari bloqueou esta reprodução; toque em Testar áudio agora para liberar o som.",
+        );
+        playNativeFallback("Falando com a voz do aparelho", false);
+      } else {
+        setPiperStatus(piperInstalled ? "ready" : "fallback");
+        setPiperError(
+          piperFailure instanceof Error
+            ? piperFailure.message
+            : "A voz Faber não pôde ser carregada",
+        );
+        playNativeFallback("Falando com a voz do aparelho", !piperInstalled);
+      }
     }
-  }, [piperStatus, setAudioSessionType, unlockAudioOutput, updatePiperProgress]);
+  }, [piperInstalled, piperStatus, setAudioSessionType, unlockAudioOutput, updatePiperProgress]);
 
   const prepareFaberVoice = async () => {
     setPiperError("");
     setPiperStatus("downloading");
     try {
       await preparePiperVoice(updatePiperProgress);
+      setPiperInstalled(true);
       setPiperStatus("ready");
       setPiperDownloadPercent(100);
       setMessage("Voz Faber pronta para a consulta");
     } catch (preparationError) {
-      setPiperStatus("fallback");
+      setPiperStatus(piperInstalled ? "ready" : "fallback");
       setPiperError(
         preparationError instanceof Error
           ? preparationError.message
@@ -1446,6 +1505,7 @@ export function VoiceApp() {
           }
         }
       });
+      setPiperInstalled(true);
 
       setPiperStatus("ready");
       setPiperDownloadPercent(100);
@@ -1469,6 +1529,13 @@ export function VoiceApp() {
     speechRequestRef.current += 1;
     activePiperAudioRef.current?.pause();
     activePiperAudioRef.current = null;
+    try {
+      activePiperSourceRef.current?.stop();
+    } catch {
+      // A fonte pode já ter terminado naturalmente.
+    }
+    activePiperSourceRef.current?.disconnect();
+    activePiperSourceRef.current = null;
     if (activePiperAudioUrlRef.current) {
       URL.revokeObjectURL(activePiperAudioUrlRef.current);
       activePiperAudioUrlRef.current = "";
@@ -2763,11 +2830,15 @@ export function VoiceApp() {
                         : "Iniciando download"
                       : piperStatus === "generating"
                         ? "Preparando voz"
-                        : piperStatus === "ready"
+                      : piperStatus === "ready"
                           ? "Pronta neste dispositivo"
                           : piperStatus === "fallback"
-                            ? "Alternativa do aparelho ativa"
-                            : "Disponível para baixar"}
+                            ? piperInstalled
+                              ? "Armazenada · alternativa ativa"
+                              : "Alternativa do aparelho ativa"
+                            : piperInstalled
+                              ? "Armazenada neste dispositivo"
+                              : "Disponível para baixar"}
                   </span>
                 </div>
                 <span>
@@ -2806,10 +2877,10 @@ export function VoiceApp() {
                 <button
                   className="piper-download-button"
                   onClick={prepareFaberVoice}
-                  disabled={piperStatus === "downloading" || piperStatus === "generating" || piperStatus === "ready"}
+                  disabled={piperInstalled || piperStatus === "downloading" || piperStatus === "generating" || piperStatus === "ready"}
                 >
-                  {piperStatus === "ready" ? (
-                    <><Check size={17} /> Voz pronta</>
+                  {piperInstalled ? (
+                    <><Check size={17} /> Voz armazenada</>
                   ) : piperStatus === "downloading" ? (
                     <><RefreshCw size={17} /> Baixando…</>
                   ) : (
