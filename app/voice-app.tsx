@@ -105,6 +105,10 @@ import {
   isNonSpeechTranscript,
 } from "./transcription-filter";
 import {
+  appendRecognitionResult,
+  collapseRecognitionRepetitions,
+} from "./transcription-repetition";
+import {
   correctWithTrainedWords,
   tokenizeTrainingPhrase,
 } from "./word-training";
@@ -478,7 +482,10 @@ export function VoiceApp() {
       source: ConsultationTurn["source"],
       kind?: ConsultationUtteranceKind,
     ) => {
-      const cleanText = text.trim();
+      const cleanText =
+        source === "microphone"
+          ? collapseRecognitionRepetitions(text)
+          : text.trim();
       if (!cleanText) return;
       const turn: ConsultationTurn = {
         id: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
@@ -663,13 +670,22 @@ export function VoiceApp() {
         try {
           const parsed = JSON.parse(savedConsultation) as ConsultationTurn[];
           if (Array.isArray(parsed)) {
-            const validTurns = parsed.filter(
-              (turn) =>
-                turn &&
-                typeof turn.id === "string" &&
-                typeof turn.text === "string" &&
-                ["doctor", "patient", "team"].includes(turn.speaker),
-            );
+            const validTurns = parsed
+              .filter(
+                (turn) =>
+                  turn &&
+                  typeof turn.id === "string" &&
+                  typeof turn.text === "string" &&
+                  ["doctor", "patient", "team"].includes(turn.speaker),
+              )
+              .map((turn) => ({
+                ...turn,
+                text:
+                  turn.source === "microphone"
+                    ? collapseRecognitionRepetitions(turn.text)
+                    : turn.text.trim(),
+              }))
+              .filter((turn) => Boolean(turn.text));
             setConsultationTurns(validTurns.slice(-250));
             setPatientTurns(
               validTurns
@@ -1394,6 +1410,9 @@ export function VoiceApp() {
           }
         }
 
+        topTranscript = collapseRecognitionRepetitions(topTranscript);
+        contextualTranscript = collapseRecognitionRepetitions(contextualTranscript);
+
         const looksLikeAppEcho =
           topTranscript &&
           (isAppSpeakingRef.current || Date.now() - synthesisEndedAtRef.current < 3500) &&
@@ -1435,9 +1454,11 @@ export function VoiceApp() {
         setPendingCorrectionAudio(recordedAudio);
         pendingCorrectionDurationMsRef.current = durationMs;
 
-        let recognizedText = correctWithTrainedWords(
-          contextualTranscript || topTranscript,
-          trainedWordVocabulary,
+        let recognizedText = collapseRecognitionRepetitions(
+          correctWithTrainedWords(
+            contextualTranscript || topTranscript,
+            trainedWordVocabulary,
+          ),
         );
         let finalText = recognizedText
           ? applyLearnedCorrection(
@@ -1479,6 +1500,7 @@ export function VoiceApp() {
           }
         }
 
+        finalText = collapseRecognitionRepetitions(finalText);
         if (!finalText || isNonSpeechTranscript(finalText)) return;
         if (!recognizedText) recognizedText = finalText;
         setRawTranscript(recognizedText);
@@ -1597,17 +1619,14 @@ export function VoiceApp() {
           setMessage("Voz da Clara ignorada; continuo ouvindo as outras pessoas");
           return;
         }
-        latestFinalRef.current = [latestFinalRef.current, finalCandidate]
-          .filter(Boolean)
-          .join(" ")
-          .trim();
-        latestContextualFinalRef.current = [
+        latestFinalRef.current = appendRecognitionResult(
+          latestFinalRef.current,
+          finalCandidate,
+        );
+        latestContextualFinalRef.current = appendRecognitionResult(
           latestContextualFinalRef.current,
           contextualFinalText.trim(),
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .trim();
+        );
         if (recorder.state === "recording") recorder.requestData();
       };
 
