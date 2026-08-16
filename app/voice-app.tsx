@@ -114,6 +114,11 @@ import {
   tokenizeTrainingPhrase,
 } from "./word-training";
 import { retryDelayMs, voiceSyncProgress } from "./voice-sync-state";
+import {
+  consultationRecordSignature,
+  recordPdfWasConfirmed,
+  RECORD_PDF_CONFIRMATION_KEY,
+} from "./record-download-state";
 
 type RecognitionAlternative = { transcript: string; confidence: number };
 
@@ -1998,9 +2003,18 @@ export function VoiceApp() {
   };
 
   const finishConsultation = () => {
+    const signature = consultationRecordSignature(
+      selectedSpecialty,
+      consultationTurns,
+    );
     setRecordText(buildClinicalRecord(consultationTurns, selectedSpecialty));
     setRecordCopied(false);
-    setRecordPdfDownloaded(false);
+    setRecordPdfDownloaded(
+      recordPdfWasConfirmed(
+        localStorage.getItem(RECORD_PDF_CONFIRMATION_KEY),
+        signature,
+      ),
+    );
     setRecordMessage("");
     setRecordDeleteRequested(false);
     setRecordOpen(true);
@@ -2008,9 +2022,18 @@ export function VoiceApp() {
 
   const requestConsultationHistoryDeletion = () => {
     if (!consultationTurns.length) return;
+    const signature = consultationRecordSignature(
+      selectedSpecialty,
+      consultationTurns,
+    );
     setRecordText(buildClinicalRecord(consultationTurns, selectedSpecialty));
     setRecordCopied(false);
-    setRecordPdfDownloaded(false);
+    setRecordPdfDownloaded(
+      recordPdfWasConfirmed(
+        localStorage.getItem(RECORD_PDF_CONFIRMATION_KEY),
+        signature,
+      ),
+    );
     setRecordMessage("");
     setRecordDeleteRequested(true);
     setRecordOpen(true);
@@ -2033,6 +2056,10 @@ export function VoiceApp() {
     try {
       const { downloadClinicalRecordPdf } = await import("./clinical-record-pdf");
       const filename = downloadClinicalRecordPdf(recordText, selectedSpecialty);
+      localStorage.setItem(
+        RECORD_PDF_CONFIRMATION_KEY,
+        consultationRecordSignature(selectedSpecialty, consultationTurns),
+      );
       setRecordPdfDownloaded(true);
       setRecordMessage(`PDF baixado: ${filename}. Agora o histórico pode ser apagado.`);
     } catch (pdfError) {
@@ -2061,6 +2088,7 @@ export function VoiceApp() {
     setRecordDeleteRequested(false);
     setRecordOpen(false);
     clearPhrase();
+    localStorage.removeItem(RECORD_PDF_CONFIRMATION_KEY);
     localStorage.removeItem("clara-active-consultation-v1");
   };
 
@@ -3093,6 +3121,7 @@ export function VoiceApp() {
                 setRecordCopied(false);
                 setRecordPdfDownloaded(false);
                 setRecordMessage("");
+                localStorage.removeItem(RECORD_PDF_CONFIRMATION_KEY);
               }}
               aria-label="Prontuário editável"
             />
